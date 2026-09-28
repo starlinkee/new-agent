@@ -27,7 +27,7 @@ export function createTicker(list, max = MAX_ENTRIES) {
     },
     // Moves everything queued in world.log into the list.
     drain(world) {
-      for (const entry of world.log.splice(0)) this.add(entry);
+      for (const entry of world.log.splice(0).slice(-max)) this.add(entry);
     },
   };
 }

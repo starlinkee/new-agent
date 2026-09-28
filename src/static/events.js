@@ -1,4 +1,4 @@
-import { addFood, mulberry32, record, split } from "./world-sim.js";
+import { addFood, delta, mulberry32, record, removeCreatures, split } from "./world-sim.js";
 
 export const EVENT_TYPES = ["meteor", "bloom", "plague", "babyboom"];
 export const MIN_DELAY = 15;
@@ -17,13 +17,6 @@ export const DEFAULTS = {
   babyBoomEnergy: 50, // creatures at least this well-fed reproduce
 };
 
-function delta(a, b, size) {
-  let d = b - a;
-  if (d > size / 2) d -= size;
-  else if (d < -size / 2) d += size;
-  return d;
-}
-
 function within(world, x, y, radius) {
   return (c) => {
     const dx = delta(x, c.x, world.width);
@@ -39,10 +32,8 @@ function plural(n, word) {
 const HANDLERS = {
   meteor(world, ctx, opts) {
     const { x = ctx.random() * world.width, y = ctx.random() * world.height, radius = ctx.config.meteorRadius } = opts;
-    const hit = world.creatures.filter(within(world, x, y, radius));
-    const doomed = new Set(hit);
-    world.creatures = world.creatures.filter((c) => !doomed.has(c));
-    world.deaths += hit.length;
+    // The event entry summarises the toll, so the individual deaths stay out of the ticker.
+    const hit = removeCreatures(world, within(world, x, y, radius), "meteor", { silent: true });
     ctx.effects.push({ type: "meteor", x, y, radius, age: 0, duration: ctx.config.meteorDuration });
     return { text: `Meteor hit! ${plural(hit.length, "creature")} lost`, affected: hit.length };
   },
@@ -65,7 +56,7 @@ const HANDLERS = {
     const { plagueMinFraction, plagueMaxFraction, plagueDuration } = ctx.config;
     const fraction = plagueMinFraction + ctx.random() * (plagueMaxFraction - plagueMinFraction);
     const victims = world.creatures.filter(() => ctx.random() < fraction);
-    for (const c of victims) c.plague = true;
+    for (const c of victims) c.plague++;
     ctx.effects.push({ type: "plague", victims, age: 0, duration: plagueDuration });
     return { text: `Plague! ${plural(victims.length, "creature")} infected`, affected: victims.length };
   },
@@ -95,6 +86,7 @@ export function createEvents({ seed, random, config } = {}) {
 
   // Fires an event now. `type` defaults to a random one; opts may pin x/y/radius.
   function trigger(world, type = EVENT_TYPES[Math.floor(rng() * EVENT_TYPES.length)], opts = {}) {
+    if (!EVENT_TYPES.includes(type)) throw new RangeError(`Unknown event type "${type}"`);
     const result = HANDLERS[type](world, ctx, opts);
     record(world, { kind: "event", type, text: result.text });
     return { type, ...result };
@@ -106,10 +98,11 @@ export function createEvents({ seed, random, config } = {}) {
       const effect = ctx.effects[i];
       effect.age += dt;
       if (effect.type === "plague") {
-        for (const c of effect.victims) if (c.energy > 0) c.energy -= ctx.config.plagueDrain * dt;
+        effect.victims = effect.victims.filter((c) => !c.dead);
+        for (const c of effect.victims) c.energy -= ctx.config.plagueDrain * dt;
       }
       if (effect.age >= effect.duration) {
-        if (effect.type === "plague") for (const c of effect.victims) c.plague = false;
+        if (effect.type === "plague") for (const c of effect.victims) c.plague--;
         ctx.effects.splice(i, 1);
       }
     }

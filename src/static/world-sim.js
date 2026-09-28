@@ -62,12 +62,29 @@ function makeCreature(world, props) {
     hue: Math.floor(random() * 360),
     energy: config.startEnergy,
     id: world.nextId++,
+    plague: 0, // number of active plagues infecting this creature
+    dead: false,
     generation: 0,
     age: 0,
     ...props,
   };
   c.radius = creatureRadius(world, c);
   return c;
+}
+
+// The one place a creature dies: flags it, counts it and (unless silent) logs it. Callers drop it from world.creatures.
+export function kill(world, c, cause = "starved", { silent = false } = {}) {
+  c.dead = true;
+  world.deaths++;
+  if (!silent) record(world, { kind: "death", id: c.id, generation: c.generation, cause });
+}
+
+export function removeCreatures(world, predicate, cause, options) {
+  const removed = world.creatures.filter(predicate);
+  if (removed.length === 0) return removed;
+  world.creatures = world.creatures.filter((c) => !predicate(c));
+  for (const c of removed) kill(world, c, cause, options);
+  return removed;
 }
 
 export function addCreature(world, props = {}) {
@@ -122,7 +139,7 @@ function wrap(v, size) {
 }
 
 // Shortest signed offset between two coordinates on the wrapping world.
-function delta(a, b, size) {
+export function delta(a, b, size) {
   let d = b - a;
   if (d > size / 2) d -= size;
   else if (d < -size / 2) d += size;
@@ -228,8 +245,7 @@ export function step(world, dt) {
     c.age += dt;
     c.energy -= (baseDrain + speedDrain * c.speed * c.speed) * dt;
     if (c.energy <= 0) {
-      world.deaths++;
-      record(world, { kind: "death", id: c.id, generation: c.generation, cause: c.plague ? "plague" : "starved" });
+      kill(world, c, c.plague > 0 ? "plague" : "starved");
       continue;
     }
     eat(world, c);

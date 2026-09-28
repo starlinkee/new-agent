@@ -16,9 +16,7 @@ test("trigger button adds an event entry to the ticker", async ({ page }) => {
 test("ticker never shows more than 8 entries", async ({ page }) => {
   await openWorld(page);
   for (let i = 0; i < 12; i++) await page.locator("#trigger-event").click();
-  await page.waitForTimeout(200);
-  const count = await page.locator("#ticker li").count();
-  expect(count).toBe(8);
+  await expect(page.locator("#ticker li")).toHaveCount(8);
 });
 
 test("births and deaths appear in the log", async ({ page }) => {
@@ -100,4 +98,71 @@ test("bloom adds food, plague drains energy, baby boom adds creatures", async ({
   expect(r.count).toBe(20);
   expect(r.infected).toBeGreaterThan(0);
   expect(r.drained).toBe(true);
+});
+
+test("meteor kills are counted as deaths and flagged dead", async ({ page }) => {
+  await openWorld(page);
+  const r = await page.evaluate(async () => {
+    const sim = await import("/static/world-sim.js");
+    const { createEvents } = await import("/static/events.js");
+    const world = sim.createWorld({ seed: 3, count: 0, config: { respawn: false } });
+    const doomed = [0, 1, 2].map((i) => sim.addCreature(world, { x: 100 + i, y: 100 }));
+    sim.addCreature(world, { x: 700, y: 500 });
+    createEvents({ seed: 3 }).trigger(world, "meteor", { x: 100, y: 100, radius: 30 });
+    return { deaths: world.deaths, flagged: doomed.every((c) => c.dead), remaining: world.creatures.length };
+  });
+  expect(r).toEqual({ deaths: 3, flagged: true, remaining: 1 });
+});
+
+test("a plague victim that dies mid-effect is dropped from the effect", async ({ page }) => {
+  await openWorld(page);
+  const r = await page.evaluate(async () => {
+    const sim = await import("/static/world-sim.js");
+    const { createEvents } = await import("/static/events.js");
+    const world = sim.createWorld({ seed: 6, count: 0, config: { respawn: false, foodSpawnRate: 0 } });
+    for (let i = 0; i < 10; i++) sim.addCreature(world, { energy: 90 });
+    const events = createEvents({ seed: 6, config: { plagueMinFraction: 1, plagueMaxFraction: 1 } });
+    events.trigger(world, "plague");
+    const infected = events.effects[0].victims.length;
+    const [victim] = world.creatures;
+    sim.removeCreatures(world, (c) => c === victim, "meteor", { silent: true });
+    events.update(world, 0.1);
+    return { infected, tracked: events.effects[0].victims.length, tracksDead: events.effects[0].victims.includes(victim) };
+  });
+  expect(r).toEqual({ infected: 10, tracked: 9, tracksDead: false });
+});
+
+test("overlapping plagues keep victims infected until both expire", async ({ page }) => {
+  await openWorld(page);
+  const r = await page.evaluate(async () => {
+    const sim = await import("/static/world-sim.js");
+    const { createEvents } = await import("/static/events.js");
+    const world = sim.createWorld({ seed: 7, count: 0, config: { respawn: false, foodSpawnRate: 0 } });
+    const c = sim.addCreature(world, { energy: 100 });
+    const events = createEvents({ seed: 7, config: { plagueMinFraction: 1, plagueMaxFraction: 1, plagueDuration: 2, plagueDrain: 1 } });
+    events.trigger(world, "plague");
+    events.update(world, 1.5);
+    events.trigger(world, "plague");
+    const both = c.plague;
+    events.update(world, 1); // first plague expires, second still active
+    const afterFirst = c.plague;
+    events.update(world, 1.5);
+    return { both, afterFirst, afterAll: c.plague };
+  });
+  expect(r).toEqual({ both: 2, afterFirst: 1, afterAll: 0 });
+});
+
+test("unknown event types are rejected", async ({ page }) => {
+  await openWorld(page);
+  const message = await page.evaluate(async () => {
+    const sim = await import("/static/world-sim.js");
+    const { createEvents } = await import("/static/events.js");
+    try {
+      createEvents({ seed: 1 }).trigger(sim.createWorld({ seed: 1 }), "typo");
+    } catch (e) {
+      return e.message;
+    }
+    return null;
+  });
+  expect(message).toBe('Unknown event type "typo"');
 });
