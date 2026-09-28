@@ -5,7 +5,7 @@ max_retry_backoff_ms: 240000
 model: claude-sonnet-5
 project_url: https://linear.app/new-agent/project/new-agent-linear-dea87a9266f5
 agent_timeout_ms: 1800000
-stall_timeout_ms: 120000
+stall_timeout_ms: 600000
 tracker:
   type: linear
 agent:
