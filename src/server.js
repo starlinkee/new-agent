@@ -1,4 +1,5 @@
 import http from "node:http";
+import { handleTodos } from "./todos.js";
 
 export function renderPage() {
   return `<!doctype html>
@@ -11,8 +12,14 @@ export function renderPage() {
 const port = Number(process.env.PORT || 3000);
 
 http
-  .createServer((req, res) => {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(renderPage());
+  .createServer(async (req, res) => {
+    try {
+      if (await handleTodos(req, res)) return;
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(renderPage());
+    } catch {
+      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "internal error" }));
+    }
   })
   .listen(port, () => console.log(`listening on http://localhost:${port}`));
