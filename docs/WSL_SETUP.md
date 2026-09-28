@@ -87,7 +87,35 @@ agent workspaces are git worktrees and do not see uncommitted changes.
 so no permission prompts appear. If `ANTHROPIC_API_KEY` is set it also adds
 `--bare`, which skips the interactive login.
 
+## Linear state reconciler (`scripts/linear_sync.py`)
+
+Contrabass hardcodes "finished run" to Linear `Done`, and also marks every running
+ticket `Done` when it shuts down, so tickets became Done with an unmerged or
+missing PR. `cb start` therefore also starts `scripts/linear_sync.py` (tmux
+session `linearsync`, every 60 s). GitHub is the source of truth:
+
+| GitHub | Linear |
+|--------|--------|
+| PR merged | Done |
+| PR open | In Review (state created on demand, type `completed`) |
+| no PR 10 min after Done | Todo (redo), max 2 times, then Backlog |
+
+The state type must be `completed`: Contrabass maps Linear types to its own
+states, and `started` would be re-run as an orphan. `cb sync-log` shows what it did.
+
 ## Gotchas
+
+- **One worker per ticket** (`omc.team_spec: "1:claude"`). With `2:claude` both
+  workers were given the same task in the same workspace, overwrote each other's
+  files and fought over the test-server port.
+- **Playwright libraries without sudo:** download the debs and extract them:
+  `apt-get download libnss3 libnspr4 libasound2t64` (or `libasound2`), then
+  `dpkg -x <deb> ~/.local/playwright-libs`. `playwright.config.js` passes that path
+  to the browser explicitly, because `LD_LIBRARY_PATH` did not reliably reach it.
+- **Network:** Linear (503, timeouts) and GitHub (`dial tcp ... i/o timeout`)
+  calls fail intermittently from WSL. Not confirmed, but the Windows host runs a
+  VPN/WARP client, which commonly breaks WSL NAT. `linear_sync.py` and Contrabass
+  both retry on the next round.
 
 - **Stopping or restarting Contrabass while agents run destroys their work.**
   Shutdown deletes the agents' workspaces, so unpushed code is lost, and Linear

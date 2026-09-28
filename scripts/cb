@@ -29,11 +29,10 @@ fi
 
 running() { tmux has-session -t "$SESSION" 2>/dev/null; }
 
-# Agents are busy when an omc-team-* session exists or the TUI shows Agents: N/.. with N > 0.
+# Agents are busy when Contrabass itself reports Agents: N/.. with N > 0. Leftover
+# omc-team-* sessions of finished runs do not count (they are stale and safe to kill).
 busy() {
-  tmux ls -F '#S' 2>/dev/null | grep -q '^omc-team-' && return 0
-  running && tmux capture-pane -p -t "$SESSION" 2>/dev/null | grep -qE 'Agents: [1-9][0-9]*/' && return 0
-  return 1
+  running && tmux capture-pane -p -t "$SESSION" 2>/dev/null | grep -qE 'Agents: [1-9][0-9]*/'
 }
 
 guard() {
