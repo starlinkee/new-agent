@@ -13,8 +13,13 @@ const port = Number(process.env.PORT || 3000);
 
 http
   .createServer(async (req, res) => {
-    if (await handleTodos(req, res)) return;
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    res.end(renderPage());
+    try {
+      if (await handleTodos(req, res)) return;
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(renderPage());
+    } catch {
+      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "internal error" }));
+    }
   })
   .listen(port, () => console.log(`listening on http://localhost:${port}`));

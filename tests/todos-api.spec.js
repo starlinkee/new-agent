@@ -1,3 +1,4 @@
+import net from "node:net";
 import { test, expect } from "@playwright/test";
 
 async function createTodo(request, title) {
@@ -105,5 +106,82 @@ test.describe("todos API", () => {
     const todo = await createTodo(request, "twice");
     expect((await request.delete(`/api/todos/${todo.id}`)).status()).toBe(204);
     expect((await request.delete(`/api/todos/${todo.id}`)).status()).toBe(404);
+  });
+
+  test("POST rejects oversized bodies with 413", async ({ request }) => {
+    const res = await request.post("/api/todos", { data: { title: "x".repeat(20 * 1024) } });
+    expect(res.status()).toBe(413);
+    expect(typeof (await res.json()).error).toBe("string");
+  });
+
+  test("POST rejects non-JSON content types with 415", async ({ request }) => {
+    const res = await request.post("/api/todos", {
+      headers: { "content-type": "text/plain" },
+      data: JSON.stringify({ title: "csrf" }),
+    });
+    expect(res.status()).toBe(415);
+    const list = await (await request.get("/api/todos")).json();
+    expect(list.map((t) => t.title)).not.toContain("csrf");
+  });
+
+  test("PATCH rejects non-JSON content types with 415", async ({ request }) => {
+    const todo = await createTodo(request, "ct");
+    const res = await request.patch(`/api/todos/${todo.id}`, {
+      headers: { "content-type": "text/plain" },
+      data: JSON.stringify({ done: true }),
+    });
+    expect(res.status()).toBe(415);
+  });
+
+  test("POST rejects over-long titles but accepts the maximum", async ({ request }) => {
+    const tooLong = await request.post("/api/todos", { data: { title: "x".repeat(501) } });
+    expect(tooLong.status()).toBe(400);
+    const ok = await request.post("/api/todos", { data: { title: "y".repeat(500) } });
+    expect(ok.status()).toBe(201);
+  });
+
+  test("non-numeric ids return 404", async ({ request }) => {
+    expect((await request.patch("/api/todos/abc", { data: { done: true } })).status()).toBe(404);
+    expect((await request.delete("/api/todos/abc")).status()).toBe(404);
+  });
+
+  test("unsupported methods return 405 with an Allow header", async ({ request }) => {
+    const collection = await request.put("/api/todos", { data: {} });
+    expect(collection.status()).toBe(405);
+    expect(collection.headers()["allow"]).toBe("GET, POST");
+    const todo = await createTodo(request, "methods");
+    const item = await request.get(`/api/todos/${todo.id}`);
+    expect(item.status()).toBe(405);
+    expect(item.headers()["allow"]).toBe("PATCH, DELETE");
+  });
+
+  test("JSON responses set nosniff", async ({ request }) => {
+    const res = await request.get("/api/todos");
+    expect(res.headers()["x-content-type-options"]).toBe("nosniff");
+  });
+
+  test("GET paginates with limit and offset", async ({ request }) => {
+    const a = await createTodo(request, "page-a");
+    const b = await createTodo(request, "page-b");
+    const all = await (await request.get("/api/todos")).json();
+    const start = all.findIndex((t) => t.id === a.id);
+    const page = await (await request.get(`/api/todos?limit=2&offset=${start}`)).json();
+    expect(page).toEqual([a, b]);
+    expect((await request.get("/api/todos?limit=abc")).status()).toBe(400);
+    expect((await request.get("/api/todos?limit=0")).status()).toBe(400);
+  });
+
+  test("a malformed request target does not crash the server", async ({ request, baseURL }) => {
+    const { hostname, port } = new URL(baseURL);
+    await new Promise((resolve) => {
+      const socket = net.connect(Number(port), hostname, () => {
+        socket.write("GET http://[ HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      });
+      socket.on("data", () => {});
+      socket.on("error", resolve);
+      socket.on("close", resolve);
+    });
+    const res = await request.get("/api/todos");
+    expect(res.status()).toBe(200);
   });
 });
