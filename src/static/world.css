@@ -1,0 +1,49 @@
+.world-hud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+.world-controls {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+.world-controls button[aria-pressed="true"] {
+  font-weight: bold;
+  outline: 2px solid currentColor;
+}
+.world-layout {
+  display: flex;
+  gap: 1rem;
+  align-items: stretch;
+}
+#world {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  height: 70vh;
+  background: #0b1d2a;
+  cursor: crosshair;
+}
+.world-inspector {
+  width: 14rem;
+  flex-shrink: 0;
+}
+.world-inspector dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.25rem 0.75rem;
+  margin: 0;
+}
+.world-inspector dd {
+  margin: 0;
+}
+.swatch {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  border-radius: 50%;
+  vertical-align: middle;
+}
