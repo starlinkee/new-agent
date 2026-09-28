@@ -8,6 +8,7 @@
 #                shutting Contrabass down deletes the agents' workspaces and
 #                their unpushed work. Add --force to override.
 #   cb status    show sessions and the TUI header
+#   cb sync-log  last lines of the Linear reconciler (scripts/linear_sync.py)
 #   cb agents    list agent sessions; "cb agents <session>" attaches to one
 #   cb clean     stop and remove stale workspaces/worktrees/state (asks first)
 #   cb           same as: cb start && cb attach
@@ -16,6 +17,10 @@ set -euo pipefail
 REPO="${CB_REPO:-$HOME/new-agent}"
 SESSION=cb
 export PATH="$PATH:$HOME/.local/bin:$HOME/go/bin"
+# Playwright's Chromium needs libnss3/libnspr4/libasound2; extracted without root (see docs/WSL_SETUP.md).
+PW_LIBS="$HOME/.local/playwright-libs/usr/lib/x86_64-linux-gnu"
+[ -d "$PW_LIBS" ] && export LD_LIBRARY_PATH="$PW_LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+SYNC=linearsync
 
 # ~/.bashrc is not read by non-interactive shells, so load the key explicitly.
 if [ -z "${LINEAR_API_KEY:-}" ] && [ -f "$HOME/.bashrc" ]; then
@@ -48,15 +53,22 @@ start() {
   cd "$REPO"
   # env -u TMUX: otherwise omc adopts the TUI window as its leader and no worker starts.
   # sleep keeps the pane open so a startup error stays readable.
+  # Keeps Linear honest: Contrabass marks a finished (or shut down) ticket Done even when
+  # the PR is unmerged or missing; this moves it to In Review / Todo / Done by PR state.
+  if ! tmux has-session -t "=$SYNC" 2>/dev/null; then
+    setsid nohup tmux new-session -d -s "$SYNC" -e "LINEAR_API_KEY=$LINEAR_API_KEY" \
+      "python3 scripts/linear_sync.py; echo 'linear_sync exited'; sleep 600" >/dev/null 2>&1 </dev/null
+  fi
   setsid nohup tmux new-session -d -s "$SESSION" -x 200 -y 50 \
+    -e "LINEAR_API_KEY=$LINEAR_API_KEY" -e "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}" -e "PATH=$PATH" \
     "env -u TMUX -u TMUX_PANE contrabass --config .contrabass/WORKFLOW.md --port 8080; echo; echo 'contrabass exited'; sleep 600" \
     >/dev/null 2>&1 </dev/null
   sleep 3
-  running && echo "started (cb attach to view)" || { echo "failed to start"; exit 1; }
+  running && echo "started (cb attach to view; cb sync-log for the Linear reconciler)" || { echo "failed to start"; exit 1; }
 }
 
 stop() {
-  for s in $(tmux ls -F '#S' 2>/dev/null | grep -E "^($SESSION|omc-team-)" || true); do
+  for s in $(tmux ls -F '#S' 2>/dev/null | grep -E "^($SESSION|$SYNC)$|^omc-team-" || true); do
     tmux kill-session -t "$s"
   done
   echo "stopped"
@@ -73,6 +85,7 @@ case "${1:-}" in
   status)
     tmux ls 2>/dev/null || echo "no tmux sessions"
     running && tmux capture-pane -p -t "$SESSION" | grep -E 'Agents|NEW-|Tokens|rror' | cut -c1-160 || true ;;
+  sync-log) tmux capture-pane -p -t "=$SYNC:" -S -200 | grep -v '^\s*$' | tail -"${2:-30}" ;;
   agents)
     if [ -n "${2:-}" ]; then exec tmux attach -t "$2"; fi
     tmux ls -F '#S' 2>/dev/null | grep '^omc-team-' || echo "no agent sessions running" ;;
