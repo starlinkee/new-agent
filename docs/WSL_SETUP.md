@@ -166,7 +166,27 @@ Workers run with all permissions bypassed, and inside WSL that includes your
   (`[automount] enabled=false`) if you do not need it.
 - Enable branch protection on `master` so agents can only open PRs.
 
-## Start / restart
+## Shortcut: the `cb` command
+
+`scripts/cb` wraps everything below (loads the Linear key, unsets `$TMUX`,
+runs detached in tmux). One-time install in WSL:
+
+```bash
+ln -sf ~/new-agent/scripts/cb ~/.local/bin/cb
+```
+
+| Command | Effect |
+|---------|--------|
+| `cb` | start if needed, then open the TUI (detach with `Ctrl-b d`, never `q`) |
+| `cb start` / `cb stop` / `cb restart` | control the pipeline |
+| `cb status` | sessions and the TUI header (agents, tokens, errors) |
+| `cb agents` | list `omc-team-*` agent sessions; `cb agents <session>` attaches |
+| `cb clean` | stop and wipe workspaces, worktrees, state and `symphony/*` branches (asks first) |
+
+From Windows: `wsl -d Ubuntu -e bash -lc "cb status"`, or `wsl -d Ubuntu -e bash -lc cb`
+to open the TUI.
+
+## Start / restart (manual, what `cb` does)
 
 ```bash
 tmux kill-session -t cb 2>/dev/null
