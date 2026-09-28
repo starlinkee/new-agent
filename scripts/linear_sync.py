@@ -32,7 +32,7 @@ treats In Review as finished and would start them before the blocker is merged).
 Backlog tickets that are "blocked by" other tickets move to Todo once every
 blocker is Done (so a dependent ticket starts only after its dependency merged).
 
-Usage: linear_sync.py [--once] [--dry-run] [--interval 20]
+Usage: linear_sync.py [--once] [--dry-run] [--interval 60]
 Env:   LINEAR_API_KEY (required), GH_REPO (default starlinkee/new-agent)
 """
 import argparse
@@ -56,6 +56,9 @@ JURY_WAIT_MIN = 3  # a head commit older than this with no jury run/verdict gets
 CB_URL = os.environ.get("CB_URL", "http://localhost:8080")
 AUTO_MERGE = os.environ.get("AUTO_MERGE", "1") != "0"
 STATE_FILE = os.path.expanduser("~/.cb-linear-sync.json")
+HEALTH_FILE = os.path.expanduser("~/.cb-linear-sync.health")  # mtime = last fully successful round
+WATCHDOG_MIN = 10  # no successful round for this long = shout in the log and in `cb status`
+LOOKUP_FAILS = 0  # PR lookups that failed in the current round
 KEY = os.environ.get("LINEAR_API_KEY", "")
 
 
@@ -113,6 +116,13 @@ def ensure_in_review(team_id, states, dry):
     states["In Review"] = d["workflowStateCreate"]["workflowState"]["id"]
 
 
+class RateLimited(RuntimeError):
+    pass
+
+
+RATE_LIMIT_SLEEP = 300
+
+
 def gh(*args):
     # gh from WSL times out now and then; retry so a Done ticket with an open PR
     # is not left wrong until the next round.
@@ -120,6 +130,8 @@ def gh(*args):
         out = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
         if out.returncode == 0:
             return out.stdout
+        if "rate limit" in out.stderr.lower():
+            raise RateLimited(out.stderr.strip()[:200])  # retrying only burns more quota
         if attempt == 2:
             raise RuntimeError(f"gh: {out.stderr.strip()[:200]}")
         time.sleep(3)
@@ -140,25 +152,41 @@ def cb_activity():
         return None
 
 
+MERGED = set()  # a merged branch never changes again; do not ask GitHub twice
+
+
+def api(path):
+    return json.loads(gh("api", path.format(repo=REPO)) or "null")
+
+
 def pr_info(branch):
-    """Status of the PR for a branch, plus the jury verdict for its current head."""
-    prs = json.loads(gh(
-        "pr", "list", "--repo", REPO, "--head", branch, "--state", "all",
-        "--json", "number,state,mergeable,headRefOid,commits,comments") or "[]")
-    if any(p["state"] == "MERGED" for p in prs):
+    """Status of the PR for a branch, plus the jury verdict for its current head.
+
+    Uses the REST API: `gh pr list --json` is GraphQL, and its 5000/hour quota ran
+    dry (every ticket, every round), which froze the whole rework loop.
+    """
+    if branch in MERGED:
         return {"status": "merged"}
-    opened = [p for p in prs if p["state"] == "OPEN"]
+    owner = REPO.split("/")[0]
+    prs = api(f"repos/{{repo}}/pulls?state=all&head={owner}:{branch}&per_page=30")
+    if any(p.get("merged_at") for p in prs):
+        MERGED.add(branch)
+        return {"status": "merged"}
+    opened = [p for p in prs if p["state"] == "open"]
     if not opened:
         return {"status": "closed" if prs else "none"}
-    pr = opened[0]
-    head_at = max((c["committedDate"] for c in pr["commits"]), default="")
+    num = opened[0]["number"]
+    pr = api(f"repos/{{repo}}/pulls/{num}")
+    commits = api(f"repos/{{repo}}/pulls/{num}/commits?per_page=100")
+    head_at = max((c["commit"]["committer"]["date"] for c in commits), default="")
     verdict = None
-    for c in pr["comments"]:  # only the jury workflow's own comments count
-        m = re.search(r"STATUS:\s*(APPROVED|REJECTED)", c["body"])
-        if m and c["author"]["login"].startswith("github-actions") and c["createdAt"] > head_at:
+    for c in api(f"repos/{{repo}}/issues/{num}/comments?per_page=100"):
+        m = re.search(r"STATUS:\s*(APPROVED|REJECTED)", c["body"])  # only the jury workflow counts
+        if m and c["user"]["login"].startswith("github-actions") and c["created_at"] > head_at:
             verdict = m.group(1)  # latest wins; older verdicts are for older commits
-    return {"status": "open", "number": pr["number"], "mergeable": pr["mergeable"],
-            "head": pr["headRefOid"], "head_at": head_at, "branch": branch, "verdict": verdict}
+    mergeable = {True: "MERGEABLE", False: "CONFLICTING"}.get(pr["mergeable"], "UNKNOWN")
+    return {"status": "open", "number": num, "mergeable": mergeable,
+            "head": pr["head"]["sha"], "head_at": head_at, "branch": branch, "verdict": verdict}
 
 
 def set_state(issue, name, states, dry, why):
@@ -286,6 +314,8 @@ def promote_unblocked(states, dry):
 
 
 def reconcile(dry):
+    global LOOKUP_FAILS
+    LOOKUP_FAILS = 0
     team_id, states = get_states()
     ensure_in_review(team_id, states, dry)
     d = gql(
@@ -310,8 +340,11 @@ def reconcile(dry):
             log(f"{ident}: In Progress but Contrabass has no run for it")
         try:
             info = pr_info(branch)
+        except RateLimited:
+            raise  # every further lookup would fail too; main() backs off
         except Exception as e:  # keep going, retry next round
             log(f"{ident}: PR lookup failed: {e}")
+            LOOKUP_FAILS += 1
             continue
         pr = info["status"]
         if pr == "merged":
@@ -337,22 +370,42 @@ def reconcile(dry):
     promote_unblocked(states, dry)
 
 
+def mark_round(ok, last_ok):
+    """Health heartbeat: a round only counts when Linear and every GitHub lookup worked."""
+    now = time.time()
+    if ok:
+        with open(HEALTH_FILE, "w") as f:
+            f.write("ok")
+        return now
+    if now - last_ok > WATCHDOG_MIN * 60:
+        log(f"WATCHDOG: no successful round for {int((now - last_ok) / 60)} min - "
+            "tickets are NOT being reconciled (rejected PRs stay Done)")
+    return last_ok
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--interval", type=int, default=20)
+    ap.add_argument("--interval", type=int, default=60)
     a = ap.parse_args()
     if not KEY:
         sys.exit("LINEAR_API_KEY is not set")
+    last_ok = time.time()
     while True:
+        ok, wait = False, a.interval
         try:
             reconcile(a.dry_run)
+            ok = LOOKUP_FAILS == 0
+        except RateLimited as e:
+            log(f"GitHub rate limit hit ({e}); sleeping {RATE_LIMIT_SLEEP}s")
+            wait = RATE_LIMIT_SLEEP
         except Exception as e:
             log(f"sync error: {e}")
+        last_ok = mark_round(ok, last_ok)
         if a.once:
             return
-        time.sleep(a.interval)
+        time.sleep(wait)
 
 
 if __name__ == "__main__":
