@@ -2,12 +2,14 @@ import { initHud } from "/static/hud.js";
 import { createWorld, resizeWorld, step } from "/static/world-sim.js";
 import { createEvents } from "/static/events.js";
 import { createTicker } from "/static/ticker.js";
+import { createStats } from "/static/stats.js";
 
 const canvas = document.getElementById("world");
 const ctx = canvas.getContext("2d");
 const world = createWorld({ width: canvas.clientWidth, height: canvas.clientHeight });
 const events = createEvents();
 const ticker = createTicker(document.getElementById("ticker"));
+const stats = createStats();
 const control = { paused: false, speed: 1 };
 const hud = initHud({ world, control, canvas });
 window.__events = events;
@@ -16,6 +18,7 @@ document.getElementById("trigger-event").addEventListener("click", () => events.
 // Test hooks only; nothing in the app reads these.
 window.__world = world;
 window.__worldControl = control;
+window.__stats = stats;
 
 function resize() {
   const ratio = window.devicePixelRatio || 1;
@@ -80,6 +83,7 @@ function frame(now) {
   events.update(world, dt);
   if (!control.paused) for (let i = 0; i < control.speed; i++) {
     step(world, dt);
+    stats.maybeSample(world);
   }
   ticker.drain(world);
   draw();
