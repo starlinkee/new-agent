@@ -27,7 +27,12 @@ pr_body = subprocess.run(
     capture_output=True, text=True, check=True,
 ).stdout
 
-client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+# Keys that are not scoped to a workspace need the workspace id header.
+workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+client = Anthropic(
+    api_key=os.environ.get("ANTHROPIC_API_KEY"),
+    default_headers={"anthropic-workspace-id": workspace_id} if workspace_id else None,
+)
 system_prompt = """
 You are a Senior Principal Engineer brought in to unblock a PR that an
 autonomous coding agent could not finish on its own (failed rebase onto

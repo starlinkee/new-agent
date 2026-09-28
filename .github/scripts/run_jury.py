@@ -9,7 +9,12 @@ with open("pr_diff.txt", "r") as file:
 if not diff_content.strip():
     sys.exit(0)
 
-client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+# Keys that are not scoped to a workspace need the workspace id header.
+workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
+client = Anthropic(
+    api_key=os.environ.get("ANTHROPIC_API_KEY"),
+    default_headers={"anthropic-workspace-id": workspace_id} if workspace_id else None,
+)
 system_prompt = """
 You are an uncompromising Senior Principal Engineer reviewing a Pull Request.
 Criteria: 1. Security (SQLi, XSS, secrets) 2. Architecture (layer bypassing) 3. Performance (N+1, memory).
