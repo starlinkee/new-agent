@@ -28,6 +28,24 @@ Issue title: {{ issue.title }}
 Issue description: {{ issue.description }}
 Issue URL: {{ issue.url }}
 
+## First: is this a rework of an existing PR?
+
+You start with an empty context, so check before writing anything:
+
+1. Find this ticket's branch and PR: `gh pr list --head symphony/<ticket-id-lowercase> --state open --json number,url`
+   (the branch is `symphony/new-<N>` for ticket NEW-<N>).
+2. If an open PR exists, this is a **rework**, not a new implementation:
+   - `git fetch origin && git checkout -B symphony/new-<N> origin/symphony/new-<N>`
+   - Read every comment on the PR (`gh pr view <number> --comments`). The newest
+     comment starting with `STATUS: REJECTED` is the AI jury's verdict: it lists
+     the blocking issues. Also check whether the PR reports merge conflicts.
+   - Fix exactly those findings (and rebase onto `origin/master` if there are
+     conflicts), keep the existing work, add tests for the fixed behavior, run
+     `npm run test:ai`, then `git push --force-with-lease` to the same branch.
+     Do NOT open a new PR and do NOT start over from scratch.
+   - After pushing, the jury re-reviews automatically; you are done.
+3. If no PR exists, continue with the normal flow below.
+
 ## How to work
 
 The omc team runs its own plan, implement and verify stages; do not add

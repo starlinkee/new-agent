@@ -8,13 +8,20 @@ their PR is unmerged, or while no PR exists at all (work lost on restart).
 Rules, per ticket NEW-N with branch symphony/new-n, for tickets in Done or
 In Review:
   PR merged                      -> Done
-  PR open                        -> In Review
+  PR open                        -> In Review, then look at the AI jury verdict:
+    verdict REJECTED (or PR has merge conflicts) -> Todo (rework the SAME branch,
+        a fresh worker reads the jury comments), at most MAX_REWORK times, then Backlog
+    verdict APPROVED, PR mergeable -> squash-merge it, ticket Done (AUTO_MERGE=0 disables)
+    no verdict for the current head commit yet -> wait
   no PR, ticket Done > GRACE min -> Todo (redo), at most MAX_REDO times, then Backlog
   PR closed unmerged             -> Todo (redo), same cap
 
 "In Review" is created on demand with type "completed": Contrabass maps the
 Linear state type to its own state ("started" would be re-run as an orphan,
 "unstarted" would be picked up again), so "completed" is the only safe type.
+
+Backlog tickets that are "blocked by" other tickets move to Todo once every
+blocker is Done (so a dependent ticket starts only after its dependency merged).
 
 Usage: linear_sync.py [--once] [--dry-run] [--interval 20]
 Env:   LINEAR_API_KEY (required), GH_REPO (default starlinkee/new-agent)
@@ -23,6 +30,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -32,6 +40,8 @@ REPO = os.environ.get("GH_REPO", "starlinkee/new-agent")
 TEAM_KEY = os.environ.get("LINEAR_TEAM_KEY", "NEW")
 GRACE_MIN = 10
 MAX_REDO = 2
+MAX_REWORK = 3
+AUTO_MERGE = os.environ.get("AUTO_MERGE", "1") != "0"
 STATE_FILE = os.path.expanduser("~/.cb-linear-sync.json")
 KEY = os.environ.get("LINEAR_API_KEY", "")
 
@@ -90,26 +100,37 @@ def ensure_in_review(team_id, states, dry):
     states["In Review"] = d["workflowStateCreate"]["workflowState"]["id"]
 
 
-def pr_for(branch):
+def gh(*args):
     # gh from WSL times out now and then; retry so a Done ticket with an open PR
     # is not left wrong until the next round.
     for attempt in range(3):
-        out = subprocess.run(
-            ["gh", "pr", "list", "--repo", REPO, "--head", branch, "--state", "all",
-             "--json", "number,state,mergedAt"],
-            capture_output=True, text=True, timeout=60,
-        )
+        out = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60)
         if out.returncode == 0:
-            break
+            return out.stdout
         if attempt == 2:
             raise RuntimeError(f"gh: {out.stderr.strip()[:200]}")
         time.sleep(3)
-    prs = json.loads(out.stdout or "[]")
+
+
+def pr_info(branch):
+    """Status of the PR for a branch, plus the jury verdict for its current head."""
+    prs = json.loads(gh(
+        "pr", "list", "--repo", REPO, "--head", branch, "--state", "all",
+        "--json", "number,state,mergeable,commits,comments") or "[]")
     if any(p["state"] == "MERGED" for p in prs):
-        return "merged"
-    if any(p["state"] == "OPEN" for p in prs):
-        return "open"
-    return "closed" if prs else "none"
+        return {"status": "merged"}
+    opened = [p for p in prs if p["state"] == "OPEN"]
+    if not opened:
+        return {"status": "closed" if prs else "none"}
+    pr = opened[0]
+    head_at = max((c["committedDate"] for c in pr["commits"]), default="")
+    verdict = None
+    for c in pr["comments"]:  # only the jury workflow's own comments count
+        m = re.search(r"STATUS:\s*(APPROVED|REJECTED)", c["body"])
+        if m and c["author"]["login"].startswith("github-actions") and c["createdAt"] > head_at:
+            verdict = m.group(1)  # latest wins; older verdicts are for older commits
+    return {"status": "open", "number": pr["number"], "mergeable": pr["mergeable"],
+            "verdict": verdict}
 
 
 def set_state(issue, name, states, dry, why):
@@ -120,6 +141,45 @@ def set_state(issue, name, states, dry, why):
         """mutation($i:String!,$s:String!){issueUpdate(id:$i,input:{stateId:$s}){success}}""",
         {"i": issue["id"], "s": states[name]},
     )
+
+
+def handle_open_pr(issue, info, states, memory, dry):
+    ident, num = issue["identifier"], info["number"]
+    reason = None
+    if info["verdict"] == "REJECTED":
+        reason = "jury REJECTED"
+    elif info["mergeable"] == "CONFLICTING":
+        reason = "merge conflicts with master"
+    if reason:
+        key = "rework:" + ident
+        n = memory.get(key, 0)
+        if n >= MAX_REWORK:
+            set_state(issue, "Backlog", states, dry,
+                      f"PR #{num}: {reason} after {n} rework rounds - needs a human")
+        else:
+            set_state(issue, "Todo", states, dry, f"PR #{num}: {reason}; rework #{n + 1}")
+            memory[key] = n + 1
+    elif info["verdict"] == "APPROVED" and info["mergeable"] == "MERGEABLE" and AUTO_MERGE:
+        log(f"{ident}: jury APPROVED, merging PR #{num}")
+        if not dry:
+            gh("pr", "merge", str(num), "--repo", REPO, "--squash", "--delete-branch")
+            set_state(issue, "Done", states, dry, f"PR #{num} merged")
+
+
+def promote_unblocked(states, dry):
+    """Backlog tickets whose blockers are all Done become Todo."""
+    d = gql(
+        """query($k:String!){issues(first:100,filter:{team:{key:{eq:$k}},
+        state:{name:{eq:"Backlog"}}}){nodes{id identifier state{name}
+        inverseRelations{nodes{type issue{identifier state{name}}}}}}}""",
+        {"k": TEAM_KEY},
+    )
+    for issue in d["issues"]["nodes"]:
+        blockers = [r["issue"] for r in issue["inverseRelations"]["nodes"]
+                    if r["type"] == "blocks"]
+        if blockers and all(b["state"]["name"] == "Done" for b in blockers):
+            names = ", ".join(b["identifier"] for b in blockers)
+            set_state(issue, "Todo", states, dry, f"unblocked ({names} Done)")
 
 
 def reconcile(dry):
@@ -137,16 +197,18 @@ def reconcile(dry):
         branch = "symphony/" + ident.lower()
         cur = issue["state"]["name"]
         try:
-            pr = pr_for(branch)
+            info = pr_info(branch)
         except Exception as e:  # keep going, retry next round
             log(f"{ident}: PR lookup failed: {e}")
             continue
+        pr = info["status"]
         if pr == "merged":
             if cur != "Done":
                 set_state(issue, "Done", states, dry, "PR merged")
         elif pr == "open":
             if cur != "In Review":
                 set_state(issue, "In Review", states, dry, "PR open, not merged")
+            handle_open_pr(issue, info, states, memory, dry)
         elif cur == "Done":  # none / closed, only Contrabass's own Done is suspicious
             age = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(
                 issue["updatedAt"].replace("Z", "+00:00"))
@@ -161,6 +223,7 @@ def reconcile(dry):
                 memory[ident] = n + 1
     if not dry:
         save_state(memory)
+    promote_unblocked(states, dry)
 
 
 def main():
