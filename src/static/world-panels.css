@@ -1,0 +1,25 @@
+.world-layout {
+  flex-wrap: wrap;
+}
+#panels {
+  flex: 0 0 18rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+#panels section[hidden],
+#panels:not(:has(section:not([hidden]))) {
+  display: none;
+}
+#panels h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+@media (max-width: 799px) {
+  .world-layout {
+    flex-direction: column;
+  }
+  #panels {
+    flex-basis: auto;
+  }
+}
