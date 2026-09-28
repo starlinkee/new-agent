@@ -80,7 +80,8 @@ clean rebase after 2 attempts in the Merge phase:
 1. Open the PR anyway, in whatever state it is in (even with the
    conflicting/failing state described in the PR body).
 2. Add the label `needs-expert-review` to the PR
-   (`gh pr edit <number> --add-label needs-expert-review`).
+   (`gh issue edit <number> --add-label needs-expert-review`). Use `gh issue edit`, not `gh pr edit`: the latter fails on the
+   Projects (classic) GraphQL deprecation error and would not add the label.
 3. In the PR description, clearly state what you tried, what failed, and
    the exact error/conflict output. This is read by a separate, more
    capable reviewer model - give it everything it needs to pick up where

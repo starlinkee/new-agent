@@ -1,6 +1,11 @@
 name: AI Merge Doctor
+# pull_request_target (not pull_request): a PR with merge conflicts has no
+# merge commit, and GitHub does not run pull_request workflows for it - which
+# is exactly the case this workflow exists for. The workflow and scripts come
+# from the base branch. PR code is only fetched to compute a text diff and is
+# never executed or installed.
 on:
-  pull_request:
+  pull_request_target:
     types: [labeled]
 jobs:
   merge-doctor:
@@ -13,7 +18,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - run: git diff origin/${{ github.base_ref }} HEAD > pr_diff.txt
+      - name: Diff of the PR against its merge base
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch origin "pull/${PR_NUMBER}/head:pr-head"
+          git diff "origin/${BASE_REF}...pr-head" > pr_diff.txt
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
