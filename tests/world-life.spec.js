@@ -73,11 +73,12 @@ test("the default seeded world is deterministic and stays populated for 60s", as
         min = Math.min(min, world.creatures.length);
         max = Math.max(max, world.creatures.length);
       }
-      return { min, max, xs: world.creatures.map((c) => c.x), maxGeneration: Math.max(...world.creatures.map((c) => c.generation)) };
+      return { min, max, respawns: world.respawns, xs: world.creatures.map((c) => c.x), maxGeneration: Math.max(...world.creatures.map((c) => c.generation)) };
     });
   const a = await run();
   const b = await run();
   expect(a).toEqual(b);
+  expect(a.respawns).toBe(0);
   expect(a.min).toBeGreaterThanOrEqual(5);
   expect(a.max).toBeLessThanOrEqual(80);
   expect(a.maxGeneration).toBeGreaterThan(0);

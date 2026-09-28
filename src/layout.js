@@ -1,10 +1,15 @@
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
+}
+
+// `body` and `head` are inserted as raw HTML and must be trusted markup only; `title` is escaped.
 export function layout({ title, body, head = "" }) {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>${title}</title>
+    <title>${escapeHtml(title)}</title>
     <link rel="stylesheet" href="/static/styles.css">
     ${head}
   </head>

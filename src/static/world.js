@@ -1,3 +1,4 @@
+import { initHud } from "/static/hud.js";
 import { createWorld, resizeWorld, step } from "/static/world-sim.js";
 import { createEvents } from "/static/events.js";
 import { createTicker } from "/static/ticker.js";
@@ -7,12 +8,13 @@ const ctx = canvas.getContext("2d");
 const world = createWorld({ width: canvas.clientWidth, height: canvas.clientHeight });
 const events = createEvents();
 const ticker = createTicker(document.getElementById("ticker"));
-window.__world = world;
+const control = { paused: false, speed: 1 };
+const hud = initHud({ world, control, canvas });
 window.__events = events;
 document.getElementById("trigger-event").addEventListener("click", () => events.trigger(world));
 
-// Shared with hud.js, which loads after this module: run state and a per-frame draw hook.
-const control = { paused: false, speed: 1, afterDraw: () => {} };
+// Test hooks only; nothing in the app reads these.
+window.__world = world;
 window.__worldControl = control;
 
 function resize() {
@@ -81,7 +83,7 @@ function frame(now) {
   }
   ticker.drain(world);
   draw();
-  control.afterDraw(ctx);
+  hud.draw(ctx, now);
   requestAnimationFrame(frame);
 }
 

@@ -1,22 +1,11 @@
-import { addCreature, addFood, createWorld } from "/static/world-sim.js";
+import { addCreature, addFood, resetWorld } from "/static/world-sim.js";
 
 const BURST_SIZE = 8;
 const BURST_SPREAD = 24;
 const PICK_SLOP = 4;
+const READOUT_INTERVAL_MS = 100;
 
-const world = window.__world;
-const control = window.__worldControl;
-const canvas = document.getElementById("world");
-const $ = (id) => document.getElementById(id);
-
-let selected = null;
-
-function pointerPosition(event) {
-  const rect = canvas.getBoundingClientRect();
-  return { x: event.clientX - rect.left, y: event.clientY - rect.top };
-}
-
-function creatureAt({ x, y }) {
+function creatureAt(world, { x, y }) {
   let best = null;
   let bestDist = Infinity;
   for (const c of world.creatures) {
@@ -29,84 +18,113 @@ function creatureAt({ x, y }) {
   return best;
 }
 
-canvas.addEventListener("click", (event) => {
-  const point = pointerPosition(event);
-  if (event.shiftKey) {
-    addCreature(world, point);
-    return;
-  }
-  const hit = creatureAt(point);
-  if (hit) {
-    selected = hit;
-    return;
-  }
-  selected = null;
+function dropFoodBurst(world, point) {
   for (let i = 0; i < BURST_SIZE; i++) {
     const angle = world.random() * Math.PI * 2;
     const dist = Math.sqrt(world.random()) * BURST_SPREAD;
-    addFood(
-      world,
-      Math.min(world.width, Math.max(0, point.x + Math.cos(angle) * dist)),
-      Math.min(world.height, Math.max(0, point.y + Math.sin(angle) * dist)),
-    );
+    const x = Math.min(world.width, Math.max(0, point.x + Math.cos(angle) * dist));
+    const y = Math.min(world.height, Math.max(0, point.y + Math.sin(angle) * dist));
+    if (!addFood(world, x, y)) return;
   }
-});
+}
 
-const pauseButton = $("pause");
-pauseButton.addEventListener("click", () => {
-  control.paused = !control.paused;
-  pauseButton.textContent = control.paused ? "Resume" : "Pause";
-  pauseButton.setAttribute("aria-pressed", String(control.paused));
-});
+// Wires the HUD, controls and inspector to a running world. `control` is the run state the frame loop
+// reads ({ paused, speed }). Returns { draw(ctx, now) }, to be called once per animation frame after the
+// world is drawn: it paints the selection highlight and refreshes the readouts a few times per second.
+export function initHud({ world, control, canvas, root = document }) {
+  const el = (id) => root.getElementById(id);
+  const nodes = {
+    pop: el("pop-count"),
+    food: el("food-count"),
+    gen: el("max-gen"),
+    elapsed: el("elapsed"),
+    empty: el("inspector-empty"),
+    stats: el("inspector-stats"),
+    status: el("insp-status"),
+    energy: el("insp-energy"),
+    age: el("insp-age"),
+    creatureGen: el("insp-gen"),
+    speed: el("insp-speed"),
+    color: el("insp-color"),
+    swatch: el("insp-swatch"),
+  };
+  const pauseButton = el("pause");
+  const speedButtons = [...root.querySelectorAll("button.speed")];
 
-const speedButtons = [...document.querySelectorAll("button.speed")];
-for (const button of speedButtons) {
-  button.addEventListener("click", () => {
-    control.speed = Number(button.dataset.speed);
-    for (const other of speedButtons) other.setAttribute("aria-pressed", String(other === button));
+  let selected = null;
+  let lastReadout = -Infinity;
+
+  const setText = (node, value) => {
+    const text = String(value);
+    if (node.textContent !== text) node.textContent = text;
+  };
+
+  canvas.addEventListener("click", (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const point = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    if (event.shiftKey) {
+      addCreature(world, point);
+      return;
+    }
+    const hit = creatureAt(world, point);
+    selected = hit;
+    if (!hit) dropFoodBurst(world, point);
   });
+
+  pauseButton.addEventListener("click", () => {
+    control.paused = !control.paused;
+    pauseButton.textContent = control.paused ? "Resume" : "Pause";
+    pauseButton.setAttribute("aria-pressed", String(control.paused));
+  });
+
+  for (const button of speedButtons) {
+    button.addEventListener("click", () => {
+      control.speed = Number(button.dataset.speed);
+      for (const other of speedButtons) other.setAttribute("aria-pressed", String(other === button));
+    });
+  }
+
+  el("reset").addEventListener("click", () => {
+    resetWorld(world);
+    selected = null;
+    lastReadout = -Infinity;
+  });
+
+  function renderReadouts(alive) {
+    let maxGen = 0;
+    for (const c of world.creatures) if (c.generation > maxGen) maxGen = c.generation;
+    setText(nodes.pop, world.creatures.length);
+    setText(nodes.food, world.food.length);
+    setText(nodes.gen, maxGen);
+    setText(nodes.elapsed, world.time.toFixed(1));
+
+    nodes.empty.hidden = selected !== null;
+    nodes.stats.hidden = selected === null;
+    if (!selected) return;
+    setText(nodes.status, alive ? "alive" : "died");
+    setText(nodes.energy, selected.energy.toFixed(1));
+    setText(nodes.age, `${selected.age.toFixed(1)}s`);
+    setText(nodes.creatureGen, selected.generation);
+    setText(nodes.speed, selected.speed.toFixed(1));
+    const color = `hsl(${Math.round(selected.hue)}, 80%, 60%)`;
+    setText(nodes.color, color);
+    nodes.swatch.style.background = color;
+  }
+
+  return {
+    draw(ctx, now) {
+      const alive = selected !== null && world.creatures.includes(selected);
+      if (alive) {
+        ctx.strokeStyle = "#fff";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(selected.x, selected.y, selected.radius + 4, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (now - lastReadout >= READOUT_INTERVAL_MS) {
+        lastReadout = now;
+        renderReadouts(alive);
+      }
+    },
+  };
 }
-
-$("reset").addEventListener("click", () => {
-  const fresh = createWorld({ width: world.width, height: world.height, config: world.config });
-  Object.assign(world, fresh);
-  selected = null;
-});
-
-function renderHud() {
-  $("pop-count").textContent = world.creatures.length;
-  $("food-count").textContent = world.food.length;
-  $("max-gen").textContent = world.creatures.reduce((max, c) => Math.max(max, c.generation), 0);
-  $("elapsed").textContent = world.time.toFixed(1);
-}
-
-function renderInspector() {
-  $("inspector-empty").hidden = selected !== null;
-  $("inspector-stats").hidden = selected === null;
-  if (!selected) return;
-  const alive = world.creatures.includes(selected);
-  $("insp-status").textContent = alive ? "alive" : "died";
-  const c = selected;
-  $("insp-energy").textContent = c.energy.toFixed(1);
-  $("insp-age").textContent = `${c.age.toFixed(1)}s`;
-  $("insp-gen").textContent = c.generation;
-  $("insp-speed").textContent = c.speed.toFixed(1);
-  const color = `hsl(${Math.round(c.hue)}, 80%, 60%)`;
-  $("insp-color").textContent = color;
-  $("insp-swatch").style.background = color;
-}
-
-function highlight(ctx) {
-  if (!selected || !world.creatures.includes(selected)) return;
-  ctx.strokeStyle = "#fff";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(selected.x, selected.y, selected.radius + 4, 0, Math.PI * 2);
-  ctx.stroke();
-}
-
-control.afterDraw = (ctx) => {
-  highlight(ctx);
-  renderHud();
-  renderInspector();
-};

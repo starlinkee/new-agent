@@ -68,7 +68,11 @@ test("reset restores the initial state", async ({ page }) => {
 test("selecting a creature shows its stats and highlights it; the panel says died on death", async ({ page }) => {
   await page.locator("#pause").click();
   const target = await page.evaluate(() => {
-    const c = window.__world.creatures[0];
+    const world = window.__world;
+    world.creatures.splice(1);
+    const c = world.creatures[0];
+    c.x = 100;
+    c.y = 100;
     return { x: c.x, y: c.y, generation: c.generation };
   });
   await page.locator("#world").click({ position: { x: target.x, y: target.y } });
@@ -83,4 +87,22 @@ test("selecting a creature shows its stats and highlights it; the panel says die
     window.__world.creatures.shift();
   });
   await expect(page.locator("#insp-status")).toHaveText("died");
+});
+
+test("clicks respect the food and creature caps", async ({ page }) => {
+  await page.locator("#pause").click();
+  const limits = await page.evaluate(() => {
+    const { config } = window.__world;
+    return { maxFood: config.maxFood, maxCreatures: config.maxCreatures };
+  });
+  const canvas = page.locator("#world");
+  for (let i = 0; i < Math.ceil(limits.maxFood / 8) + 2; i++) {
+    await canvas.click({ position: { x: 50 + i, y: 50 } });
+  }
+  for (let i = 0; i < limits.maxCreatures; i++) {
+    await canvas.click({ position: { x: 300 + i, y: 300 }, modifiers: ["Shift"] });
+  }
+  const sizes = await page.evaluate(() => ({ food: window.__world.food.length, creatures: window.__world.creatures.length }));
+  expect(sizes.food).toBeLessThanOrEqual(limits.maxFood);
+  expect(sizes.creatures).toBe(limits.maxCreatures);
 });

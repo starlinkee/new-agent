@@ -87,13 +87,17 @@ export function removeCreatures(world, predicate, cause, options) {
   return removed;
 }
 
+// Manual additions respect the same caps as the automatic paths, so clicking cannot grow the world unboundedly.
+// Returns null when the world is full.
 export function addCreature(world, props = {}) {
+  if (world.creatures.length >= world.config.maxCreatures) return null;
   const c = makeCreature(world, props);
   world.creatures.push(c);
   return c;
 }
 
 export function addFood(world, x = world.random() * world.width, y = world.random() * world.height) {
+  if (world.food.length >= world.config.maxFood) return null;
   const pellet = { x, y };
   world.food.push(pellet);
   return pellet;
@@ -114,9 +118,24 @@ export function createWorld({ width = 800, height = 600, count = CREATURE_COUNT,
     log: [],
     births: 0,
     deaths: 0,
+    respawns: 0,
   };
   for (let i = 0; i < count; i++) addCreature(world);
   return world;
+}
+
+// Restores the initial state in place. The world keeps its dimensions, config and random source, so a
+// seeded world replays from wherever its generator currently is and an unseeded one stays unseeded.
+export function resetWorld(world, count = CREATURE_COUNT) {
+  world.creatures = [];
+  world.food = [];
+  world.foodBudget = 0;
+  world.time = 0;
+  world.births = 0;
+  world.deaths = 0;
+  world.respawns = 0;
+  world.log = [];
+  for (let i = 0; i < count; i++) addCreature(world);
 }
 
 export function resizeWorld(world, width, height) {
@@ -251,7 +270,7 @@ export function step(world, dt) {
     eat(world, c);
     c.radius = creatureRadius(world, c);
     survivors.push(c);
-    if (c.energy > splitThreshold && survivors.length + born.length < maxCreatures) {
+    if (c.energy >= splitThreshold && survivors.length + born.length < maxCreatures) {
       born.push(split(world, c));
       c.radius = creatureRadius(world, c);
     }
@@ -259,6 +278,7 @@ export function step(world, dt) {
   world.creatures = survivors.concat(born);
 
   if (respawn && world.creatures.length === 0) {
+    world.respawns++;
     for (let i = 0; i < founders; i++) addCreature(world);
   }
 }
