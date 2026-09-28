@@ -60,7 +60,7 @@ You own this ticket end-to-end. Do not write implementation code yourself.
 Once QA passes, do **not** open a PR straight away. First make sure your
 branch actually merges cleanly:
 
-1. `git fetch origin && git rebase origin/main`
+1. `git fetch origin && git rebase origin/master`
 2. If the rebase is clean, run the QA command one more time to confirm
    nothing broke, then open the PR normally.
 3. If there are conflicts:
