@@ -116,7 +116,7 @@ def pr_info(branch):
     """Status of the PR for a branch, plus the jury verdict for its current head."""
     prs = json.loads(gh(
         "pr", "list", "--repo", REPO, "--head", branch, "--state", "all",
-        "--json", "number,state,mergeable,commits,comments") or "[]")
+        "--json", "number,state,mergeable,headRefOid,commits,comments") or "[]")
     if any(p["state"] == "MERGED" for p in prs):
         return {"status": "merged"}
     opened = [p for p in prs if p["state"] == "OPEN"]
@@ -130,7 +130,7 @@ def pr_info(branch):
         if m and c["author"]["login"].startswith("github-actions") and c["createdAt"] > head_at:
             verdict = m.group(1)  # latest wins; older verdicts are for older commits
     return {"status": "open", "number": pr["number"], "mergeable": pr["mergeable"],
-            "verdict": verdict}
+            "head": pr["headRefOid"], "verdict": verdict}
 
 
 def set_state(issue, name, states, dry, why):
@@ -144,26 +144,39 @@ def set_state(issue, name, states, dry, why):
 
 
 def handle_open_pr(issue, info, states, memory, dry):
-    ident, num = issue["identifier"], info["number"]
+    """One decision, one Linear write, so tickets never flap between states."""
+    ident, num, cur = issue["identifier"], info["number"], issue["state"]["name"]
     reason = None
     if info["verdict"] == "REJECTED":
         reason = "jury REJECTED"
     elif info["mergeable"] == "CONFLICTING":
         reason = "merge conflicts with master"
+    key = "rework:" + ident
+    rec = memory.get(key)
+    if not isinstance(rec, dict):
+        rec = {"n": rec or 0, "head": None}
     if reason:
-        key = "rework:" + ident
-        n = memory.get(key, 0)
-        if n >= MAX_REWORK:
+        if rec["head"] == info["head"]:
+            # Reworked once already and the branch did not move: the worker made
+            # no progress, so retrying would just loop.
             set_state(issue, "Backlog", states, dry,
-                      f"PR #{num}: {reason} after {n} rework rounds - needs a human")
+                      f"PR #{num}: {reason}, worker pushed nothing in rework #{rec['n']} - needs a human")
+            memory.pop(key, None)
+        elif rec["n"] >= MAX_REWORK:
+            set_state(issue, "Backlog", states, dry,
+                      f"PR #{num}: {reason} after {rec['n']} rework rounds - needs a human")
+            memory.pop(key, None)
         else:
-            set_state(issue, "Todo", states, dry, f"PR #{num}: {reason}; rework #{n + 1}")
-            memory[key] = n + 1
+            set_state(issue, "Todo", states, dry, f"PR #{num}: {reason}; rework #{rec['n'] + 1}")
+            memory[key] = {"n": rec["n"] + 1, "head": info["head"]}
     elif info["verdict"] == "APPROVED" and info["mergeable"] == "MERGEABLE" and AUTO_MERGE:
         log(f"{ident}: jury APPROVED, merging PR #{num}")
         if not dry:
             gh("pr", "merge", str(num), "--repo", REPO, "--squash", "--delete-branch")
             set_state(issue, "Done", states, dry, f"PR #{num} merged")
+        memory.pop(key, None)
+    elif cur != "In Review":
+        set_state(issue, "In Review", states, dry, "PR open, awaiting jury/merge")
 
 
 def promote_unblocked(states, dry):
@@ -206,8 +219,6 @@ def reconcile(dry):
             if cur != "Done":
                 set_state(issue, "Done", states, dry, "PR merged")
         elif pr == "open":
-            if cur != "In Review":
-                set_state(issue, "In Review", states, dry, "PR open, not merged")
             handle_open_pr(issue, info, states, memory, dry)
         elif cur == "Done":  # none / closed, only Contrabass's own Done is suspicious
             age = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(
