@@ -35,6 +35,14 @@ export function mulberry32(seed) {
   };
 }
 
+const LOG_LIMIT = 200;
+
+// Appends to the world's feed of things that happened; a UI drains it, headless runs just keep the tail.
+export function record(world, entry) {
+  world.log.push({ time: world.time, ...entry });
+  if (world.log.length > LOG_LIMIT) world.log.shift();
+}
+
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -53,6 +61,7 @@ function makeCreature(world, props) {
     speed: 20 + random() * 50,
     hue: Math.floor(random() * 360),
     energy: config.startEnergy,
+    id: world.nextId++,
     generation: 0,
     age: 0,
     ...props,
@@ -84,6 +93,8 @@ export function createWorld({ width = 800, height = 600, count = CREATURE_COUNT,
     food: [],
     foodBudget: 0,
     time: 0,
+    nextId: 1,
+    log: [],
     births: 0,
     deaths: 0,
   };
@@ -186,7 +197,7 @@ function mutate(world, parent) {
   };
 }
 
-function split(world, parent) {
+export function split(world, parent) {
   const { splitCost } = world.config;
   const share = (parent.energy - splitCost) / 2;
   parent.energy = share;
@@ -199,6 +210,7 @@ function split(world, parent) {
     ...mutate(world, parent),
   });
   world.births++;
+  record(world, { kind: "birth", id: child.id, generation: child.generation });
   return child;
 }
 
@@ -217,6 +229,7 @@ export function step(world, dt) {
     c.energy -= (baseDrain + speedDrain * c.speed * c.speed) * dt;
     if (c.energy <= 0) {
       world.deaths++;
+      record(world, { kind: "death", id: c.id, generation: c.generation, cause: c.plague ? "plague" : "starved" });
       continue;
     }
     eat(world, c);
