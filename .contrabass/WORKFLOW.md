@@ -13,6 +13,7 @@ agent:
 omc:
   binary_path: omc
   team_spec: "2:claude"
+  startup_timeout_ms: 180000
 team:
   worker_mode: goroutine
 ---
