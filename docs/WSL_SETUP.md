@@ -89,6 +89,22 @@ so no permission prompts appear. If `ANTHROPIC_API_KEY` is set it also adds
 
 ## Gotchas
 
+- **Stopping or restarting Contrabass while agents run destroys their work.**
+  Shutdown deletes the agents' workspaces, so unpushed code is lost, and Linear
+  may still show the ticket as Done. This happened to NEW-10/11/12. `cb` now
+  refuses unless you pass `--force`. Check `cb status` first.
+- **Playwright needs system libraries in WSL** (`libnss3`, `libnspr4`,
+  `libasound2`, ...). Without them Chromium exits with code 127 and every
+  browser test fails, so agent QA cannot pass. One-time fix:
+  `sudo npx playwright install-deps chromium`.
+- **Linear timeouts** (`api.linear.app ... context deadline exceeded`) were seen
+  under load, while manual calls were fast (0.1 s) and IPv6 fails instantly and
+  falls back to IPv4, so IPv6 is not the cause. A run that finishes but cannot
+  write its status back to Linear gets picked up again, so watch for repeated
+  claims of the same ticket in the Contrabass log.
+- **Do not leave a ticket In Progress while Contrabass is stopped.** On start
+  it re-runs orphaned claims (`orphan_claim_recovered`).
+
 - **Claude Code asks interactive questions once per folder/install**, and
   worker panes wait on them forever (`worker_startup_evidence_missing`,
   `panes=0`). Pre-answer them once:
@@ -178,7 +194,7 @@ ln -sf ~/new-agent/scripts/cb ~/.local/bin/cb
 | Command | Effect |
 |---------|--------|
 | `cb` | start if needed, then open the TUI (detach with `Ctrl-b d`, never `q`) |
-| `cb start` / `cb stop` / `cb restart` | control the pipeline |
+| `cb start` / `cb stop` / `cb restart` | control the pipeline. `stop`/`restart`/`clean` **refuse while agents are running**; `--force` overrides |
 | `cb status` | sessions and the TUI header (agents, tokens, errors) |
 | `cb agents` | list `omc-team-*` agent sessions; `cb agents <session>` attaches |
 | `cb clean` | stop and wipe workspaces, worktrees, state and `symphony/*` branches (asks first) |

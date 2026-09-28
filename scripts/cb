@@ -4,6 +4,9 @@
 #   cb attach    open the TUI (detach with Ctrl-b d, do NOT press q)
 #   cb stop      stop Contrabass and any agent (omc-team-*) sessions
 #   cb restart   stop + start
+#                stop/restart/clean REFUSE while agents are running, because
+#                shutting Contrabass down deletes the agents' workspaces and
+#                their unpushed work. Add --force to override.
 #   cb status    show sessions and the TUI header
 #   cb agents    list agent sessions; "cb agents <session>" attaches to one
 #   cb clean     stop and remove stale workspaces/worktrees/state (asks first)
@@ -20,6 +23,21 @@ if [ -z "${LINEAR_API_KEY:-}" ] && [ -f "$HOME/.bashrc" ]; then
 fi
 
 running() { tmux has-session -t "$SESSION" 2>/dev/null; }
+
+# Agents are busy when an omc-team-* session exists or the TUI shows Agents: N/.. with N > 0.
+busy() {
+  tmux ls -F '#S' 2>/dev/null | grep -q '^omc-team-' && return 0
+  running && tmux capture-pane -p -t "$SESSION" 2>/dev/null | grep -qE 'Agents: [1-9][0-9]*/' && return 0
+  return 1
+}
+
+guard() {
+  if busy && [ "${FORCE:-0}" != 1 ]; then
+    echo "Refusing: agents are running. Stopping now would delete their workspaces and unpushed work."
+    echo "Check with 'cb status', wait for them to finish, or repeat with --force."
+    exit 1
+  fi
+}
 
 start() {
   [ -n "${LINEAR_API_KEY:-}" ] || { echo "LINEAR_API_KEY is not set (add it to ~/.bashrc)"; exit 1; }
@@ -44,10 +62,13 @@ stop() {
   echo "stopped"
 }
 
+FORCE=0
+for a in "$@"; do [ "$a" = --force ] && FORCE=1; done
+
 case "${1:-}" in
   start)   start ;;
-  stop)    stop ;;
-  restart) stop; start ;;
+  stop)    guard; stop ;;
+  restart) guard; stop; start ;;
   attach)  exec tmux attach -t "$SESSION" ;;
   status)
     tmux ls 2>/dev/null || echo "no tmux sessions"
@@ -58,6 +79,7 @@ case "${1:-}" in
   clean)
     read -r -p "Stop everything and delete ALL workspaces, state and symphony/* local branches? [y/N] " a
     [ "$a" = y ] || exit 0
+    guard
     stop
     cd "$REPO"
     for w in workspaces/*; do [ -e "$w" ] && git worktree remove --force "$w"; done

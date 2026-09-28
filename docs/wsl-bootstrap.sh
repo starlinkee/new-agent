@@ -50,6 +50,9 @@ d['skipDangerousModePermissionPrompt'] = True
 json.dump(d, open(p, 'w'), indent=2)
 PY
 
+echo "==> Playwright system libraries (needed for browser QA)"
+sudo npx --yes playwright install-deps chromium || echo "install-deps failed; run it manually"
+
 echo "==> Verify"
 for c in tmux node npm gh claude omc contrabass git; do
   printf '%-12s' "$c"; command -v "$c" || echo MISSING
