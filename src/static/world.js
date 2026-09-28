@@ -3,6 +3,7 @@ import { createWorld, resizeWorld, step } from "/static/world-sim.js";
 import { createEvents } from "/static/events.js";
 import { createTicker } from "/static/ticker.js";
 import { createStats } from "/static/stats.js";
+import { drawCreature, renderLegend } from "/static/render-species.js";
 
 const canvas = document.getElementById("world");
 const ctx = canvas.getContext("2d");
@@ -19,6 +20,12 @@ document.getElementById("trigger-event").addEventListener("click", () => events.
 window.__world = world;
 window.__worldControl = control;
 window.__stats = stats;
+window.__renderStats = { drawn: { herbivore: 0, predator: 0 } };
+
+const legend = document.createElement("div");
+legend.id = "legend";
+document.querySelector(".world-layout").after(legend);
+renderLegend(legend);
 
 function resize() {
   const ratio = window.devicePixelRatio || 1;
@@ -67,13 +74,12 @@ function draw() {
     ctx.fill();
   }
   drawEffects();
+  const drawn = { herbivore: 0, predator: 0 };
   for (const c of world.creatures) {
-    const fullness = Math.min(c.energy / world.config.maxEnergy, 1);
-    ctx.fillStyle = `hsl(${c.hue} 80% ${30 + fullness * 35}%)`;
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
-    ctx.fill();
+    const species = drawCreature(ctx, world, c);
+    drawn[species] = (drawn[species] ?? 0) + 1;
   }
+  window.__renderStats = { drawn };
 }
 
 let last = performance.now();
