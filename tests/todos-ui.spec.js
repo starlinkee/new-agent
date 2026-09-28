@@ -41,6 +41,9 @@ test.describe("todos UI", () => {
   test("deletes a todo", async ({ page }) => {
     await page.fill("#new-todo", "one");
     await page.click("#add-todo");
+    // The page clears the input once the POST returns; wait for it, or that
+    // late clear wipes "two" while it is being typed.
+    await expect(page.locator("li[data-id]")).toHaveCount(1);
     await page.fill("#new-todo", "two");
     await page.click("#add-todo");
     await expect(page.locator("li[data-id]")).toHaveCount(2);
