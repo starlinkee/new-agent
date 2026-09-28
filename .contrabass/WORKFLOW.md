@@ -30,9 +30,9 @@ Issue URL: {{ issue.url }}
 
 ## Zero: are this ticket's blockers merged?
 
-Blocked by (Linear ticket identifiers, may be empty): {{ issue.blocked_by }}
+Blockers are listed in the issue description or Linear relations ("blocked by NEW-<N>"); if none are mentioned, continue.
 
-For each blocker `NEW-<N>` listed above, check that its PR is merged:
+For each blocker `NEW-<N>` you find, check that its PR is merged:
 `gh pr list --head symphony/new-<n> --state merged --json number` (lowercase `n`).
 If any blocker has no merged PR, its code is not on `origin/master` yet, so do
 NOT start: make no commits, open no PR, and stop right away with a one-line
