@@ -9,7 +9,7 @@ export function layout({ title, body }) {
   </head>
   <body>
     <header class="site-header">
-      <nav><a href="/">Home</a></nav>
+      <nav><a href="/">Home</a> <a id="world-link" href="/world">World</a></nav>
     </header>
     <main>${body}</main>
   </body>

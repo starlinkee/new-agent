@@ -5,7 +5,10 @@ import { renderNotFound } from "./layout.js";
 
 const STATIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "static");
 const STATIC_PREFIX = "/static/";
-const CONTENT_TYPES = { ".css": "text/css; charset=utf-8" };
+const CONTENT_TYPES = {
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+};
 
 function sendHtml(res, status, html) {
   res.writeHead(status, { "content-type": "text/html; charset=utf-8" });
