@@ -4,15 +4,25 @@
   // Opus 5 is reserved for the low-frequency GitHub Actions gates
   // (AI Jury, merge-doctor) - see .github/scripts/.
   //
-  // NOTE: the exact role keys below (lead/executor/qa) are best-effort
-  // from oh-my-claudecode's docs at setup time and were not verified
-  // against a live install. Run `omc --help` / check the tool's own
-  // schema docs and adjust these keys if routing doesn't take effect.
+  // Role keys verified against a live install (`omc info` prints the
+  // allowed-roles error listing them). All 15 known roles are pinned.
   "team": {
     "roleRouting": {
-      "lead": { "model": "claude-sonnet-5" },
+      "orchestrator": { "model": "claude-sonnet-5" },
+      "planner": { "model": "claude-sonnet-5" },
+      "analyst": { "model": "claude-sonnet-5" },
+      "architect": { "model": "claude-sonnet-5" },
       "executor": { "model": "claude-sonnet-5" },
-      "qa": { "model": "claude-sonnet-5" }
+      "debugger": { "model": "claude-sonnet-5" },
+      "critic": { "model": "claude-sonnet-5" },
+      "code-reviewer": { "model": "claude-sonnet-5" },
+      "security-reviewer": { "model": "claude-sonnet-5" },
+      "test-engineer": { "model": "claude-sonnet-5" },
+      "designer": { "model": "claude-sonnet-5" },
+      "writer": { "model": "claude-sonnet-5" },
+      "code-simplifier": { "model": "claude-sonnet-5" },
+      "explore": { "model": "claude-sonnet-5" },
+      "document-specialist": { "model": "claude-sonnet-5" }
     }
   }
 }

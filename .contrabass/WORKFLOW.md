@@ -13,6 +13,8 @@ agent:
 omc:
   binary_path: omc
   team_spec: "2:claude"
+team:
+  worker_mode: goroutine
 ---
 # New Agent - Autonomous Delivery Workflow
 
