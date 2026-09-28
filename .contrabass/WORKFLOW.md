@@ -28,53 +28,50 @@ Issue title: {{ issue.title }}
 Issue description: {{ issue.description }}
 Issue URL: {{ issue.url }}
 
-## Role: Team Lead
+## How to work
 
-You own this ticket end-to-end. Do not write implementation code yourself.
+The omc team runs its own plan, implement and verify stages; do not add
+custom roles on top of it.
 
-1. Spawn an "Implementer" to do the coding.
-2. When the Implementer reports done, spawn a "QA Tester" immediately.
-3. Only move to the "Merge" phase once QA returns `VERDICT: PASS`.
-4. If QA returns `VERDICT: FAIL`, send the failure output straight back to
-   the Implementer and repeat. Stop after 4 failed fix loops and escalate
-   (see "If everything fails" below).
-
-## Role: Implementer
-
-- Strictly coding. Do not run tests yourself.
-- Clean code only: no `TODO`s, no mocked/stubbed data, no half-finished
-  branches.
-- Report back to the Team Lead when finished, or when you cannot proceed.
-
-## Role: QA Tester (Playwright E2E)
-
-- Command: `npm run test:ai` (or `npx playwright test --reporter=list --workers=1`).
-- Headless terminal only. Never use `--ui`.
-- Read the terminal output yourself, don't guess.
-- `VERDICT: PASS` if everything is green.
-- `VERDICT: FAIL` plus the exact stack trace and failing line numbers
-  otherwise, so the Implementer can fix it without re-running the suite
-  blind.
+- Implement the ticket with clean code only: no `TODO`s, no mocked/stubbed
+  data, no half-finished branches.
+- If the ticket changes user-visible behavior, add or update a Playwright
+  test that covers it. Use one spec file per feature (e.g.
+  `tests/name.spec.js`) so parallel tickets do not edit the same file. A
+  behavior change without a test is not done.
+- If the ticket has no user-visible behavior (docs, config, CI, pure
+  refactor), do not invent a test; state in the PR description why none
+  was needed. The existing suite must still pass.
+- Stay inside the scope of this ticket. Other tickets run in parallel in
+  their own worktrees, so prefer adding new files over rewriting shared
+  ones, to keep the later rebase conflict-free.
+- Verify with `npm run test:ai` (run `npm ci && npx playwright install
+  chromium` first if `node_modules` is missing). Headless only, never
+  `--ui`. Read the output yourself; the run counts as verified only if at
+  least one test ran and all passed.
+- If verification fails, fix and re-run. Stop after 4 failed fix loops and
+  escalate (see "If everything fails" below).
 
 ## Merge phase: rebase before you open a PR
 
-Once QA passes, do **not** open a PR straight away. First make sure your
+Once verification passes, do **not** open a PR straight away. First make sure your
 branch actually merges cleanly:
 
 1. `git fetch origin && git rebase origin/master`
-2. If the rebase is clean, run the QA command one more time to confirm
-   nothing broke, then open the PR normally.
+2. If the rebase is clean, run `npm run test:ai` one more time to confirm
+   nothing broke, then open the PR normally. Paste the final test summary
+   line into the PR description.
 3. If there are conflicts:
-   a. As the Implementer, resolve them in the code (not by blindly taking
+   a. Resolve them in the code (not by blindly taking
       "ours"/"theirs" - understand what both sides changed).
-   b. Continue the rebase, then re-run QA.
+   b. Continue the rebase, then re-run the tests.
    c. Repeat up to 2 times total.
-4. If you still cannot get a clean rebase + passing QA after 2 attempts,
+4. If you still cannot get a clean rebase + passing tests after 2 attempts,
    stop trying to force it yourself.
 
 ## If everything fails: escalate, don't guess
 
-If you hit the fix-loop limit in the Team Lead step, or you cannot get a
+If you hit the fix-loop limit, or you cannot get a
 clean rebase after 2 attempts in the Merge phase:
 
 1. Open the PR anyway, in whatever state it is in (even with the

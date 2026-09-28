@@ -4,3 +4,5 @@ node_modules/
 .contrabass/state/
 workspaces/
 .omc/
+playwright-report/
+test-results/
