@@ -1,0 +1,18 @@
+{
+  // Pins every oh-my-claudecode role to Sonnet 5 so the automated
+  // coding/testing/rebase loop never auto-routes to a pricier model.
+  // Opus 5 is reserved for the low-frequency GitHub Actions gates
+  // (AI Jury, merge-doctor) - see .github/scripts/.
+  //
+  // NOTE: the exact role keys below (lead/executor/qa) are best-effort
+  // from oh-my-claudecode's docs at setup time and were not verified
+  // against a live install. Run `omc --help` / check the tool's own
+  // schema docs and adjust these keys if routing doesn't take effect.
+  "team": {
+    "roleRouting": {
+      "lead": { "model": "claude-sonnet-5" },
+      "executor": { "model": "claude-sonnet-5" },
+      "qa": { "model": "claude-sonnet-5" }
+    }
+  }
+}
