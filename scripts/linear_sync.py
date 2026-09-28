@@ -16,7 +16,7 @@ In Review:
 Linear state type to its own state ("started" would be re-run as an orphan,
 "unstarted" would be picked up again), so "completed" is the only safe type.
 
-Usage: linear_sync.py [--once] [--dry-run] [--interval 60]
+Usage: linear_sync.py [--once] [--dry-run] [--interval 20]
 Env:   LINEAR_API_KEY (required), GH_REPO (default starlinkee/new-agent)
 """
 import argparse
@@ -91,13 +91,19 @@ def ensure_in_review(team_id, states, dry):
 
 
 def pr_for(branch):
-    out = subprocess.run(
-        ["gh", "pr", "list", "--repo", REPO, "--head", branch, "--state", "all",
-         "--json", "number,state,mergedAt"],
-        capture_output=True, text=True, timeout=60,
-    )
-    if out.returncode != 0:
-        raise RuntimeError(f"gh: {out.stderr.strip()[:200]}")
+    # gh from WSL times out now and then; retry so a Done ticket with an open PR
+    # is not left wrong until the next round.
+    for attempt in range(3):
+        out = subprocess.run(
+            ["gh", "pr", "list", "--repo", REPO, "--head", branch, "--state", "all",
+             "--json", "number,state,mergedAt"],
+            capture_output=True, text=True, timeout=60,
+        )
+        if out.returncode == 0:
+            break
+        if attempt == 2:
+            raise RuntimeError(f"gh: {out.stderr.strip()[:200]}")
+        time.sleep(3)
     prs = json.loads(out.stdout or "[]")
     if any(p["state"] == "MERGED" for p in prs):
         return "merged"
@@ -161,7 +167,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--interval", type=int, default=60)
+    ap.add_argument("--interval", type=int, default=20)
     a = ap.parse_args()
     if not KEY:
         sys.exit("LINEAR_API_KEY is not set")

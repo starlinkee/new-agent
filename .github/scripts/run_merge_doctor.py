@@ -1,7 +1,8 @@
 import os
 import sys
 import subprocess
-from anthropic import Anthropic
+
+from claude_cli import ask_claude
 
 # This only fires when the worker labeled the PR "needs-expert-review"
 # after failing to get a clean rebase + passing QA after 2 attempts
@@ -27,12 +28,6 @@ pr_body = subprocess.run(
     capture_output=True, text=True, check=True,
 ).stdout
 
-# Keys that are not scoped to a workspace need the workspace id header.
-workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
-client = Anthropic(
-    api_key=os.environ.get("ANTHROPIC_API_KEY"),
-    default_headers={"anthropic-workspace-id": workspace_id} if workspace_id else None,
-)
 system_prompt = """
 You are a Senior Principal Engineer brought in to unblock a PR that an
 autonomous coding agent could not finish on its own (failed rebase onto
@@ -48,20 +43,11 @@ advice. If the diff looks fine and the failure was likely a flaky test
 or environment issue, say that plainly instead of inventing a conflict.
 """
 
-response = client.messages.create(
-    model="claude-opus-5",
-    max_tokens=2048,
-    system=system_prompt,
-    messages=[{
-        "role": "user",
-        "content": (
-            f"Agent's own account of what it tried:\n\n{pr_body}\n\n"
-            f"Current PR diff against the base branch:\n\n{diff_content}"
-        ),
-    }],
+advice = ask_claude(
+    system_prompt,
+    f"Agent's own account of what it tried:\n\n{pr_body}\n\n"
+    f"Current PR diff against the base branch:\n\n{diff_content}",
 )
-
-advice = response.content[0].text
 
 subprocess.run(
     ["gh", "pr", "comment", pr_number, "--body-file", "-"],

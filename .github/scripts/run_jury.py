@@ -1,7 +1,8 @@
 import os
 import sys
 import subprocess
-from anthropic import Anthropic
+
+from claude_cli import ask_claude
 
 with open("pr_diff.txt", "r") as file:
     diff_content = file.read()
@@ -9,12 +10,6 @@ with open("pr_diff.txt", "r") as file:
 if not diff_content.strip():
     sys.exit(0)
 
-# Keys that are not scoped to a workspace need the workspace id header.
-workspace_id = os.environ.get("ANTHROPIC_WORKSPACE_ID")
-client = Anthropic(
-    api_key=os.environ.get("ANTHROPIC_API_KEY"),
-    default_headers={"anthropic-workspace-id": workspace_id} if workspace_id else None,
-)
 system_prompt = """
 You are an uncompromising Senior Principal Engineer reviewing a Pull Request.
 Criteria: 1. Security (SQLi, XSS, secrets) 2. Architecture (layer bypassing) 3. Performance (N+1, memory).
@@ -22,14 +17,7 @@ If violations exist, output "STATUS: REJECTED" and list issues.
 If clean, output "STATUS: APPROVED".
 """
 
-response = client.messages.create(
-    model="claude-opus-5",
-    max_tokens=1024,
-    system=system_prompt,
-    messages=[{"role": "user", "content": f"Review this PR diff:\n\n{diff_content}"}]
-)
-
-verdict = response.content[0].text
+verdict = ask_claude(system_prompt, f"Review this PR diff:\n\n{diff_content}")
 
 subprocess.run(
     ["gh", "pr", "comment", os.environ["PR_NUMBER"], "--body-file", "-"],
