@@ -27,6 +27,8 @@ Moves to Backlog leave a Linear comment saying why.
 Linear state type to its own state ("started" would be re-run as an orphan,
 "unstarted" would be picked up again), so "completed" is the only safe type.
 
+Todo/In Progress tickets whose blocker is In Review go back to Backlog (Contrabass
+treats In Review as finished and would start them before the blocker is merged).
 Backlog tickets that are "blocked by" other tickets move to Todo once every
 blocker is Done (so a dependent ticket starts only after its dependency merged).
 
@@ -244,6 +246,29 @@ def handle_open_pr(issue, info, states, memory, dry):
             retrigger_jury(ident, info, memory, dry)
 
 
+def demote_blocked(states, dry):
+    """Todo / In Progress tickets with a blocker In Review (PR open, not merged) go to Backlog.
+
+    Contrabass only holds a ticket while its blockers are Todo or In Progress; once a
+    blocker is In Review (type "completed") it looks finished and the dependent starts
+    on a master that lacks the blocker's code. Parking it here closes that gap;
+    promote_unblocked moves it back to Todo when the blockers are merged (Done).
+    """
+    d = gql(
+        """query($k:String!){issues(first:100,filter:{team:{key:{eq:$k}},
+        state:{name:{in:["Todo","In Progress"]}}}){nodes{id identifier state{name}
+        inverseRelations{nodes{type issue{identifier state{name}}}}}}}""",
+        {"k": TEAM_KEY},
+    )
+    for issue in d["issues"]["nodes"]:
+        blockers = [r["issue"] for r in issue["inverseRelations"]["nodes"]
+                    if r["type"] == "blocks"]
+        waiting = [b["identifier"] for b in blockers if b["state"]["name"] == "In Review"]
+        if waiting:
+            set_state(issue, "Backlog", states, dry,
+                      f"waiting for {', '.join(waiting)} to be merged")
+
+
 def promote_unblocked(states, dry):
     """Backlog tickets whose blockers are all Done become Todo."""
     d = gql(
@@ -308,6 +333,7 @@ def reconcile(dry):
                 memory[ident] = n + 1
     if not dry:
         save_state(memory)
+    demote_blocked(states, dry)
     promote_unblocked(states, dry)
 
 

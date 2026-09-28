@@ -28,6 +28,18 @@ Issue title: {{ issue.title }}
 Issue description: {{ issue.description }}
 Issue URL: {{ issue.url }}
 
+## Zero: are this ticket's blockers merged?
+
+Blocked by (Linear ticket identifiers, may be empty): {{ issue.blocked_by }}
+
+For each blocker `NEW-<N>` listed above, check that its PR is merged:
+`gh pr list --head symphony/new-<n> --state merged --json number` (lowercase `n`).
+If any blocker has no merged PR, its code is not on `origin/master` yet, so do
+NOT start: make no commits, open no PR, and stop right away with a one-line
+explanation of which blockers are unmerged. The reconciler parks this ticket in
+Backlog and moves it back to Todo once the blockers are merged. If the list is
+empty, continue.
+
 ## First: is this a rework of an existing PR?
 
 You start with an empty context, so check before writing anything:
