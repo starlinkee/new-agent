@@ -27,6 +27,7 @@ const legend = document.createElement("div");
 legend.id = "legend";
 document.querySelector(".world-layout").after(legend);
 renderLegend(legend);
+mountPanels({ world, stats, control });
 
 function resize() {
   const ratio = window.devicePixelRatio || 1;
