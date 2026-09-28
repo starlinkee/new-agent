@@ -1,4 +1,5 @@
 import http from "node:http";
+import { handleTodos } from "./todos.js";
 
 export function renderPage() {
   return `<!doctype html>
@@ -11,7 +12,8 @@ export function renderPage() {
 const port = Number(process.env.PORT || 3000);
 
 http
-  .createServer((req, res) => {
+  .createServer(async (req, res) => {
+    if (await handleTodos(req, res)) return;
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(renderPage());
   })
