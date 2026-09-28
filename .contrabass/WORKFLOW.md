@@ -13,11 +13,6 @@ agent:
 omc:
   binary_path: omc
   team_spec: "2:claude"
-team:
-  max_workers: 5
-  max_fix_loops: 4
-  execution_mode: team
-  worker_mode: tmux
 ---
 # New Agent - Autonomous Delivery Workflow
 
