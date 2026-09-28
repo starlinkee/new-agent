@@ -21,6 +21,8 @@ export const DEFAULT_CONFIG = {
   maxCreatures: 80,
   founders: 5, // respawned when the population dies out
   respawn: true,
+  // Per-species tuning lives here; later tickets add entries and fields.
+  species: { herbivore: {} },
 };
 
 // Small, fast, seedable PRNG so a world can be replayed exactly.
@@ -64,6 +66,7 @@ function makeCreature(world, props) {
     id: world.nextId++,
     plague: 0, // number of active plagues infecting this creature
     dead: false,
+    species: "herbivore",
     generation: 0,
     age: 0,
     ...props,
@@ -103,13 +106,14 @@ export function addFood(world, x = world.random() * world.width, y = world.rando
   return pellet;
 }
 
-export function createWorld({ width = 800, height = 600, count = CREATURE_COUNT, seed, random, config } = {}) {
+export function createWorld({ width = 800, height = 600, count = CREATURE_COUNT, seed, random, config, systems = [] } = {}) {
   const rng = random ?? (seed === undefined ? Math.random : mulberry32(seed));
   const world = {
     width,
     height,
     random: rng,
     config: { ...DEFAULT_CONFIG, ...config },
+    systems: [...systems],
     creatures: [],
     food: [],
     foodBudget: 0,
@@ -122,6 +126,19 @@ export function createWorld({ width = 800, height = 600, count = CREATURE_COUNT,
   };
   for (let i = 0; i < count; i++) addCreature(world);
   return world;
+}
+
+// Adds a system: fn(world, dt) is called once per step, after the herbivore logic, in registration order.
+export function registerSystem(world, fn) {
+  world.systems.push(fn);
+  return fn;
+}
+
+export function countBySpecies(world) {
+  const counts = {};
+  for (const name of Object.keys(world.config.species)) counts[name] = 0;
+  for (const c of world.creatures) counts[c.species] = (counts[c.species] ?? 0) + 1;
+  return counts;
 }
 
 // Restores the initial state in place. The world keeps its dimensions, config and random source, so a
@@ -242,6 +259,7 @@ export function split(world, parent) {
     y: parent.y,
     heading: world.random() * TAU,
     energy: share,
+    species: parent.species,
     generation: parent.generation + 1,
     ...mutate(world, parent),
   });
@@ -281,4 +299,6 @@ export function step(world, dt) {
     world.respawns++;
     for (let i = 0; i < founders; i++) addCreature(world);
   }
+
+  for (const system of world.systems) system(world, dt);
 }
