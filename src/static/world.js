@@ -11,6 +11,10 @@ window.__world = world;
 window.__events = events;
 document.getElementById("trigger-event").addEventListener("click", () => events.trigger(world));
 
+// Shared with hud.js, which loads after this module: run state and a per-frame draw hook.
+const control = { paused: false, speed: 1, afterDraw: () => {} };
+window.__worldControl = control;
+
 function resize() {
   const ratio = window.devicePixelRatio || 1;
   const width = canvas.clientWidth;
@@ -72,9 +76,12 @@ function frame(now) {
   const dt = Math.min((now - last) / 1000, 0.1);
   last = now;
   events.update(world, dt);
-  step(world, dt);
+  if (!control.paused) for (let i = 0; i < control.speed; i++) {
+    step(world, dt);
+  }
   ticker.drain(world);
   draw();
+  control.afterDraw(ctx);
   requestAnimationFrame(frame);
 }
 

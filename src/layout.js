@@ -1,4 +1,4 @@
-export function layout({ title, body }) {
+export function layout({ title, body, head = "" }) {
   return `<!doctype html>
 <html lang="en">
   <head>
@@ -6,6 +6,7 @@ export function layout({ title, body }) {
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>${title}</title>
     <link rel="stylesheet" href="/static/styles.css">
+    ${head}
   </head>
   <body>
     <header class="site-header">
