@@ -17,8 +17,15 @@ function resize() {
 
 function draw() {
   ctx.clearRect(0, 0, world.width, world.height);
+  ctx.fillStyle = "#3ddc6a";
+  for (const f of world.food) {
+    ctx.beginPath();
+    ctx.arc(f.x, f.y, world.config.foodRadius, 0, Math.PI * 2);
+    ctx.fill();
+  }
   for (const c of world.creatures) {
-    ctx.fillStyle = `hsl(${c.hue} 80% 60%)`;
+    const fullness = Math.min(c.energy / world.config.maxEnergy, 1);
+    ctx.fillStyle = `hsl(${c.hue} 80% ${30 + fullness * 35}%)`;
     ctx.beginPath();
     ctx.arc(c.x, c.y, c.radius, 0, Math.PI * 2);
     ctx.fill();
