@@ -1,11 +1,12 @@
 import http from "node:http";
 import { handleTodos } from "./todos.js";
+import { renderTodosPage } from "./todos-page.js";
 
 export function renderPage() {
   return `<!doctype html>
 <html lang="en">
   <head><meta charset="utf-8"><title>Hello</title></head>
-  <body><h1 id="greeting">Hello, world!</h1></body>
+  <body><h1 id="greeting">Hello, world!</h1><p><a id="todos-link" href="/todos">Todos</a></p></body>
 </html>`;
 }
 
@@ -15,8 +16,9 @@ http
   .createServer(async (req, res) => {
     try {
       if (await handleTodos(req, res)) return;
+      const path = req.url.split("?")[0];
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderPage());
+      res.end(path === "/todos" ? renderTodosPage() : renderPage());
     } catch {
       if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "internal error" }));
