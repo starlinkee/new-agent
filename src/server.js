@@ -3,6 +3,7 @@ import { handleTodos } from "./todos.js";
 import { renderTodosPage } from "./todos-page.js";
 import { layout } from "./layout.js";
 import { handleRequest } from "./site.js";
+import { handleHealth } from "./health.js";
 
 export function renderPage() {
   return layout({
@@ -16,6 +17,7 @@ const port = Number(process.env.PORT || 3000);
 http
   .createServer(async (req, res) => {
     try {
+      if (new URL(req.url, "http://localhost").pathname === "/health") return handleHealth(req, res);
       if (await handleTodos(req, res)) return;
       await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage });
     } catch {
