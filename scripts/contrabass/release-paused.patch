@@ -1,0 +1,39 @@
+--- a/internal/orchestrator/orchestrator.go	2026-09-29 15:35:43.744969801 +0200
++++ b/internal/orchestrator/orchestrator.go	2026-09-29 15:35:43.790331902 +0200
+@@ -221,6 +221,7 @@
+ 	o.mu.Unlock()
+ 
+ 	openIDs := buildOpenIDSet(issues)
++	o.releasePausedIssues(issuesByID)
+ 
+ 	o.dispatchReadyBackoff(ctx, supervisorCtxOr(ctx), cfg, issuesByID, supervisor, runSignals)
+ 	o.recoverOrphanedClaims(issues)
+@@ -229,6 +230,28 @@
+ 	o.emitStatusUpdate()
+ }
+ 
++// releasePausedIssues forgets a paused run ("success_unverified", left In Progress for
++// review) once its issue is no longer In Progress: a person moved it back to Todo, or it
++// went to Backlog / In Review / Done. Without this the pause lasts until a restart and
++// the issue is never dispatched again, even from Todo.
++func (o *Orchestrator) releasePausedIssues(issuesByID map[string]types.Issue) {
++	o.mu.Lock()
++	released := make([]string, 0)
++	for id := range o.paused {
++		if issue, ok := issuesByID[id]; ok && issue.State == types.Claimed {
++			continue // still In Progress: stays parked for review
++		}
++		delete(o.paused, id)
++		delete(o.recoveredSet, id)
++		released = append(released, id)
++	}
++	o.mu.Unlock()
++
++	for _, id := range released {
++		logging.LogIssueEvent(o.logger, id, "paused_released", "reason", "issue left In Progress")
++	}
++}
++
+ // buildOpenIDSet returns the set of issue identifiers visible in the snapshot
+ // (i.e. not in a tracker-terminal state). Used by dispatch and revalidation
+ // passes to test BlockedBy membership consistently within a tick.

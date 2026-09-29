@@ -29,7 +29,8 @@ fi
 
 echo "==> Claude Code, oh-my-claudecode (omc), Contrabass"
 sudo npm i -g @anthropic-ai/claude-code oh-my-claude-sisyphus
-go install github.com/junhoyeo/contrabass/cmd/contrabass@latest
+# v0.5.1 + local patches (scripts/contrabass/README.md), not @latest
+bash "$(dirname "$0")/../scripts/contrabass/install.sh"
 grep -q 'go/bin' ~/.bashrc || echo 'export PATH="$PATH:$HOME/go/bin"' >> ~/.bashrc
 export PATH="$PATH:$HOME/go/bin"
 

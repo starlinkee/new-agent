@@ -12,6 +12,8 @@
 #   cb sync-log  last lines of the Linear reconciler (scripts/linear_sync.py)
 #   cb sync-restart  restart only the reconciler (safe while agents run)
 #   cb agents    list agent sessions; "cb agents <session>" attaches to one
+#   cb watch     live output of every worker, the omc manager and Contrabass in one stream
+#                ("cb watch NEW-34" for one ticket; "cb watch --help" for options)
 #   cb clean     stop and remove stale workspaces/worktrees/state (asks first)
 #   cb           same as: cb start && cb attach
 set -euo pipefail
@@ -109,6 +111,7 @@ case "${1:-}" in
   agents)
     if [ -n "${2:-}" ]; then exec tmux attach -t "$2"; fi
     tmux ls -F '#S' 2>/dev/null | grep '^omc-team-' || echo "no agent sessions running" ;;
+  watch)   shift; exec python3 "$REPO/scripts/agent_watch.py" "$@" ;;
   clean)
     read -r -p "Stop everything and delete ALL workspaces, state and symphony/* local branches? [y/N] " a
     [ "$a" = y ] || exit 0
@@ -121,5 +124,5 @@ case "${1:-}" in
     rm -rf .contrabass/state
     echo "clean" ;;
   ""|run)  start; exec tmux attach -t "$SESSION" ;;
-  *) sed -n 2,16p "$0"; exit 1 ;;
+  *) sed -n 2,18p "$0"; exit 1 ;;
 esac

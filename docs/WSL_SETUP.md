@@ -11,9 +11,9 @@ from scratch, the fixes that were needed, and how to inspect a running instance.
    ```bash
    bash /mnt/c/Users/shiva/Desktop/new-agent/docs/wsl-bootstrap.sh
    ```
-   The bootstrap has not been tested end to end. It installs Contrabass via
-   `go install github.com/junhoyeo/contrabass/cmd/contrabass@latest`; check
-   that module path first if the install fails.
+   The bootstrap has not been tested end to end. It installs Contrabass v0.5.1
+   with this repo's patches via `scripts/contrabass/install.sh` (see
+   `scripts/contrabass/README.md`); rerun that script after any Contrabass upgrade.
 3. Interactive logins and secrets (cannot be scripted):
    ```bash
    gh auth login
@@ -251,11 +251,12 @@ ln -sf ~/new-agent/scripts/cb ~/.local/bin/cb
 | `cb start` / `cb stop` / `cb restart` | control the pipeline. `stop`/`restart`/`clean` **refuse while agents are running**; `--force` overrides |
 | `cb status` | sessions and the TUI header (agents, tokens, errors) |
 | `cb agents` | list `omc-team-*` agent sessions; `cb agents <session>` attaches |
+| `cb watch` | live stream of every worker (text, tool calls, results), the omc manager and Contrabass run events; `cb watch NEW-34` for one ticket, `--full` / `--no-results` / `--recent MIN` (see `cb watch --help`) |
 | `cb sync-restart` | restart only the Linear reconciler, e.g. after pulling a new `linear_sync.py` (safe while agents run) |
 | `cb clean` | stop and wipe workspaces, worktrees, state and `symphony/*` branches (asks first) |
 
 From Windows: `wsl -d Ubuntu -e bash -lc "cb status"`, or `wsl -d Ubuntu -e bash -lc cb`
-to open the TUI.
+to open the TUI, or `wsl -d Ubuntu -e bash -lc "cb watch"` for the agents' output.
 
 ## Start / restart (manual, what `cb` does)
 
