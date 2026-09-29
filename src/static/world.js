@@ -27,7 +27,8 @@ const legend = document.createElement("div");
 legend.id = "legend";
 document.querySelector(".world-layout").after(legend);
 renderLegend(legend);
-mountPanels({ world, stats, control });
+const unmountPanels = mountPanels({ world, stats, control });
+window.addEventListener("pagehide", unmountPanels);
 
 function resize() {
   const ratio = window.devicePixelRatio || 1;

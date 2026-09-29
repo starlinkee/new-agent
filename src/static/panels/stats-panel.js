@@ -1,5 +1,5 @@
 // Population chart panel: one line per species plus food (dashed, secondary scale), and a text summary.
-import { speciesOf } from "/static/stats.js";
+import { speciesColor } from "/static/render-species.js";
 
 export const slot = "panel-stats";
 
@@ -7,18 +7,8 @@ const REDRAW_MS = 250; // at most 4 redraws per second
 const FOOD_COLOR = "#3ddc6a";
 const PAD = { left: 34, right: 34, top: 8, bottom: 18 };
 
-function speciesColor(name, world) {
-  const match = /^hue-(\d+)$/.exec(name);
-  if (match) return `hsl(${match[1]} 80% 60%)`;
-  const sample = world?.creatures.find((c) => speciesOf(c) === name);
-  if (sample) return `hsl(${Math.round(sample.hue)} 80% 60%)`;
-  let h = 0;
-  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
-  return `hsl(${h} 70% 60%)`;
-}
-
 export function mount(el, ctx) {
-  if (!ctx?.stats || !ctx?.world) throw new Error("stats panel requires ctx.stats and ctx.world");
+  if (!ctx?.stats) throw new Error("stats panel requires ctx.stats");
   const chart = document.createElement("canvas");
   chart.id = "pop-chart";
   chart.style.cssText = "display:block;width:100%;height:160px;background:#0b1d2a";
@@ -28,12 +18,8 @@ export function mount(el, ctx) {
   el.append(chart, summary);
 
   const g = chart.getContext("2d");
-  const colors = new Map();
-
-  function color(name) {
-    if (!colors.has(name)) colors.set(name, speciesColor(name, ctx.world));
-    return colors.get(name);
-  }
+  let drawnEntry;
+  let drawnLength = -1;
 
   function updateSummary(series) {
     const latest = series[series.length - 1];
@@ -55,6 +41,11 @@ export function mount(el, ctx) {
 
   function draw() {
     const series = ctx.stats.series;
+    const last = series[series.length - 1];
+    // The series is a ring buffer, so a new latest entry is the change signal even at constant length.
+    if (last === drawnEntry && series.length === drawnLength) return;
+    drawnEntry = last;
+    drawnLength = series.length;
     updateSummary(series);
 
     const ratio = window.devicePixelRatio || 1;
@@ -92,7 +83,7 @@ export function mount(el, ctx) {
     g.strokeRect(PAD.left, PAD.top, plotW, plotH);
 
     for (const name of names) {
-      line(series.map((s) => [px(s), py(s.counts[name] ?? 0, maxPop)]), color(name), []);
+      line(series.map((s) => [px(s), py(s.counts[name] ?? 0, maxPop)]), speciesColor(name), []);
     }
     line(series.map((s) => [px(s), py(s.food, maxFood)]), FOOD_COLOR, [5, 4]);
 
@@ -113,7 +104,7 @@ export function mount(el, ctx) {
 
   let timer = 0;
   function tick() {
-    draw();
+    if (!document.hidden) draw();
     timer = setTimeout(tick, REDRAW_MS);
   }
   tick();

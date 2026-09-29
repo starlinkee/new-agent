@@ -12,17 +12,24 @@ test("population chart panel shows species summary and draws lines", async ({ pa
   });
   await expect(page.locator("#pop-summary")).toContainText(/zebras [1-9]/, { timeout: 10000 });
 
-  // Zebra line color is hsl(200 80% 60%) = rgb(61,173,235); sample inside the plot, away from the border.
+  // Zebra line color comes from the shared species color helper.
+  const expected = await page.evaluate(async () => {
+    const { speciesColor } = await import("/static/render-species.js");
+    const probe = document.createElement("canvas").getContext("2d");
+    probe.fillStyle = speciesColor("zebras");
+    probe.fillRect(0, 0, 1, 1);
+    return Array.from(probe.getImageData(0, 0, 1, 1).data);
+  });
   await expect
     .poll(() =>
-      page.evaluate(() => {
+      page.evaluate((rgb) => {
         const c = document.getElementById("pop-chart");
         const { data } = c.getContext("2d").getImageData(0, 0, c.width, c.height);
         for (let i = 0; i < data.length; i += 4) {
-          if (data[i + 3] > 200 && Math.abs(data[i] - 61) < 12 && Math.abs(data[i + 1] - 173) < 12 && Math.abs(data[i + 2] - 235) < 12) return true;
+          if (data[i + 3] > 200 && rgb.every((v, k) => Math.abs(data[i + k] - v) < 12)) return true;
         }
         return false;
-      }),
+      }, expected.slice(0, 3)),
     )
     .toBe(true);
 });
