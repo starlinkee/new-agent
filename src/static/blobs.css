@@ -1,0 +1,8 @@
+#blobs-root { position: relative; width: 100%; overflow: hidden; background: #f4f6f8; border-radius: 6px; }
+#blobs-canvas { display: block; width: 100%; height: 70vh; }
+#blobs-hud { position: absolute; inset: 0; pointer-events: none; }
+#blobs-join { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; gap: 0.5rem; padding: 1rem 1.25rem; background: rgba(255, 255, 255, 0.92); border-radius: 8px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2); }
+#blobs-join[hidden] { display: none; }
+#blobs-dead { font-weight: 600; }
+#blobs-dead[hidden] { display: none; }
+#blobs-status { min-height: 1.5em; }
