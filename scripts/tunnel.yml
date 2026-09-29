@@ -28,4 +28,7 @@ ingress:
   - hostname: pulse.viktorbobinski.com
     path: ^/(pulse/?|static/.*|api/pulse/.*)?$
     service: http://localhost:3000
+  - hostname: biome.viktorbobinski.com
+    path: ^/(biome|static/.*|vendor/.*|api/biome/.*)?$
+    service: http://localhost:3000
   - service: http_status:404
