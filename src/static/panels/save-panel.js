@@ -30,6 +30,7 @@ export function mount(el, { world }) {
   const input = el.querySelector("#save-name");
   const status = el.querySelector("#save-status");
   const list = el.querySelector("#save-list");
+  const saveButton = el.querySelector("#save-button");
 
   function setStatus(text, isError = false) {
     status.textContent = text;
@@ -54,12 +55,13 @@ export function mount(el, { world }) {
     return li;
   }
 
+  let disposed = false;
   let refreshToken = 0;
   async function refresh() {
     const token = ++refreshToken;
     try {
       const snapshots = await request(API);
-      if (token === refreshToken) list.replaceChildren(...snapshots.map(row));
+      if (token === refreshToken && !disposed) list.replaceChildren(...snapshots.map(row));
     } catch (err) {
       if (token === refreshToken) setStatus(`Could not list snapshots: ${err.message}`, true);
     }
@@ -93,6 +95,7 @@ export function mount(el, { world }) {
     event.preventDefault();
     const name = input.value.trim();
     if (!name) return setStatus("Enter a name first", true);
+    saveButton.disabled = true;
     try {
       await request(API, {
         method: "POST",
@@ -104,8 +107,16 @@ export function mount(el, { world }) {
       await refresh();
     } catch (err) {
       setStatus(`Could not save: ${err.message}`, true);
+    } finally {
+      saveButton.disabled = false;
     }
   });
 
-  return refresh();
+  refresh();
+  return () => {
+    disposed = true;
+    refreshToken++;
+    loadToken++;
+    el.replaceChildren();
+  };
 }

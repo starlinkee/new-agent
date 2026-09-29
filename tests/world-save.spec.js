@@ -97,6 +97,11 @@ test("restoreWorld rejects bad data without mutating the world", async ({ page }
       { ...good, food: Array.from({ length: good.config.maxFood + 1 }, () => ({ x: 1, y: 1 })) },
       { ...good, creatures: [{ ...c, x: world.width + 1 }], nextId: 10 },
       { ...good, food: [{ x: 1, y: -5 }] },
+      { ...good, config: { ...good.config, maxCreatures: 1e9, maxFood: 1e9 } },
+      { ...good, config: { ...good.config, foodRadius: 1e300 } },
+      { ...good, creatures: [{ ...c, radius: -4 }], nextId: 10 },
+      { ...good, creatures: [{ ...c, energy: -1 }], nextId: 10 },
+      { ...good, creatures: [{ ...c, speed: -1 }], nextId: 10 },
     ];
     const messages = [];
     for (const data of bad) {
