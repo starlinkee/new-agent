@@ -1,33 +1,140 @@
 import os
-import sys
+import re
 import subprocess
+import sys
 
 from claude_cli import ask_claude
+from linear_ticket import ticket_text
+from verdict import marker
 
-with open("pr_diff.txt", "r") as file:
-    diff_content = file.read()
+# The last gate before the reconciler merges automatically; no human looks after it.
+# Runs from a trusted checkout of the base branch (ai-jury.yml) and never executes PR code.
+# Inputs prepared by the workflow, in the current directory:
+#   pr_diff.txt            what the PR changes, measured from the merge base
+#   tests/outcome.txt      "passed", "failed" or "conflict": the tests job ran the suite on the
+#                          PR head merged with the base branch, without any secrets
+#   tests/test_output.txt  that run's output
+# Posts exactly one verdict for HEAD_SHA (format: verdict.py), or none if it cannot judge,
+# in which case the reconciler starts the jury again.
 
-if not diff_content.strip():
-    sys.exit(0)
+PR = os.environ["PR_NUMBER"]
+SHA = os.environ["HEAD_SHA"]
+HEAD = os.environ["HEAD_REF"]
+BASE = os.environ["BASE_REF"]
+MAX_DIFF = 300_000
+
+
+def read(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def set_status(state, description):
+    """The required `jury-review` check (branch protection on master), set on the reviewed head.
+
+    Under pull_request_target the job's own check run belongs to the base commit, so it
+    cannot satisfy the PR; a commit status on HEAD_SHA does, and only for that commit.
+    """
+    subprocess.run(["gh", "api", f"repos/{os.environ['GH_REPO']}/statuses/{SHA}",
+                    "-f", f"state={state}", "-f", "context=jury-review",
+                    "-f", f"description={description}"], capture_output=True, text=True)
+
+
+def post(status, body):
+    set_status("success" if status == "APPROVED" else "failure", f"AI jury: {status.lower()}")
+    subprocess.run(
+        ["gh", "pr", "comment", PR, "--body-file", "-"],
+        input=f"{marker(status, SHA)}\nSTATUS: {status}\n\n{body.strip()}\n\n_Reviewed head `{SHA[:7]}`._",
+        text=True, check=True,
+    )
+    # A rejection fails the check. Routing it (the Merge Doctor fixes the findings) is the
+    # reconciler's job: scripts/linear_sync.py.
+    sys.exit(1 if status == "REJECTED" else 0)
+
+
+def fenced(text):
+    return "```text\n" + text.replace("```", "'''") + "\n```"
+
+
+set_status("pending", "AI jury: reviewing")
+outcome = (read("tests/outcome.txt") or "").strip()
+test_log = read("tests/test_output.txt") or ""
+if outcome not in ("passed", "failed", "conflict"):
+    print(f"the tests job left no outcome ({outcome!r}); no verdict", file=sys.stderr)
+    set_status("error", "AI jury: tests job broke, no verdict")
+    sys.exit(1)
+if outcome == "conflict":
+    post("REJECTED", f"## Blocking\n\n1. The branch does not merge cleanly into `{BASE}`. "
+                     f"Rebase it onto `origin/{BASE}` and resolve the conflicts.")
+# Playwright prints "N passed"; a green exit without it means no test ran at all.
+if outcome == "failed" or not re.search(r"\b[1-9]\d* passed\b", test_log):
+    post("REJECTED", f"## Blocking\n\n1. `npm run test:ai` does not pass on this branch merged with "
+                     f"`{BASE}` (or ran no test). Fix the cause; never skip, delete or weaken tests. "
+                     f"End of the output:\n\n{fenced(test_log[-8000:])}")
+
+diff = read("pr_diff.txt") or ""
+if not diff.strip():
+    post("REJECTED", f"## Blocking\n\n1. The PR changes nothing relative to `{BASE}`. "
+                     "If its work already landed there, the PR should be closed.")
+if len(diff) > MAX_DIFF:
+    diff = diff[:MAX_DIFF] + f"\n\n[diff truncated at {MAX_DIFF} characters]"
 
 system_prompt = """
-You are an uncompromising Senior Principal Engineer reviewing a Pull Request.
-Criteria: 1. Security (SQLi, XSS, secrets) 2. Architecture (layer bypassing) 3. Performance (N+1, memory).
-If violations exist, output "STATUS: REJECTED" and list issues.
-If clean, output "STATUS: APPROVED".
+You are the final gate before an autonomous coding agent's pull request is merged
+automatically into the product. No human reviews it after you. The full Playwright suite
+has already passed on this branch merged with the base branch.
+
+You get the Linear ticket (the specification), the PR description and the diff.
+
+Reject only for BLOCKING problems:
+1. The diff does not deliver the ticket's Goal / Scope / Acceptance, delivers something
+   else, or changes things far outside the ticket's scope.
+2. User-visible behaviour is added or changed without a Playwright test that checks it;
+   tests are weakened, skipped, or assert nothing meaningful; the test script is gamed.
+3. Security: injection, XSS, secrets in code, missing input validation at the API boundary.
+4. Correctness bugs you would not ship; TODOs, stubs, mocked data, dead code paths.
+5. Architecture or performance problems that will clearly hurt: bypassed layers,
+   unbounded growth, needless O(n^2) work in hot paths.
+Style, naming, taste and optional improvements are NOT blocking.
+
+Answer in exactly this format:
+- Line 1: `STATUS: APPROVED` or `STATUS: REJECTED`, nothing else on the line.
+- If rejected: a section `## Blocking` with numbered findings, each with file:line,
+  the problem, and the fix you expect. Another agent fixes exactly these.
+- Optionally: a section `## Non-blocking` with short suggestions. They never cause a rejection.
 """
 
-verdict = ask_claude(system_prompt, f"Review this PR diff:\n\n{diff_content}")
-
-subprocess.run(
-    ["gh", "pr", "comment", os.environ["PR_NUMBER"], "--body-file", "-"],
-    input=verdict,
-    text=True,
-    check=True,
+ticket = ticket_text(HEAD)
+pr = subprocess.run(["gh", "pr", "view", PR, "--json", "title,body", "--jq", '.title + "\\n\\n" + .body'],
+                    capture_output=True, text=True).stdout
+summary = next((l for l in reversed(test_log.splitlines()) if re.search(r"\bpassed\b", l)), "")
+prompt = (
+    (f"## Linear ticket\n\n{ticket}\n\n" if ticket else
+     "## Linear ticket\n\n(not found: judge the diff against the PR description)\n\n")
+    + f"## Pull request\n\n{pr}\n\n"
+    + f"## Tests\n\n`npm run test:ai` passed: {summary.strip()}\n\n"
+    + f"## Diff (against the merge base with {BASE}; package-lock.json omitted)\n\n{diff}"
 )
 
-# A rejection fails the check. Routing it (the Merge Doctor fixes the findings) is the
-# reconciler's job: scripts/linear_sync.py.
-if "STATUS: REJECTED" in verdict:
-    sys.exit(1)
-sys.exit(0)
+
+def status_of(answer):
+    first = next((l for l in answer.splitlines() if l.strip()), "")
+    m = re.fullmatch(r"STATUS:\s*(APPROVED|REJECTED)", first.strip().strip("*`# ").strip())
+    return m and m.group(1)
+
+
+for attempt in range(2):
+    try:
+        answer = ask_claude(system_prompt, prompt)
+    except RuntimeError as e:
+        print(e, file=sys.stderr)
+        continue
+    status = status_of(answer)
+    if status:
+        post(status, answer.split("\n", 1)[1] if "\n" in answer else "")
+    print(f"unparseable verdict (attempt {attempt + 1}):\n{answer[:1000]}", file=sys.stderr)
+set_status("error", "AI jury: no verdict")
+sys.exit(1)

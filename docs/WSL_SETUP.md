@@ -38,9 +38,10 @@ Then put a ticket in Todo in the Linear project "New Agent".
   `.contrabass/state/` and `workspaces/`.
 - tmux session `cb` holds the TUI. In `goroutine` worker mode the agents run
   as `omc` teams, which create their own tmux sessions (`omc-team-...`).
-- Agent runner is `omc` (`agent.type: omc`, `omc.team_spec: "2:claude"`).
-  Each ticket runs `omc team 2:claude "<task>"` in an isolated workspace.
-- Tracker: Linear, project "New Agent". Model: `claude-sonnet-5`.
+- Agent runner is `omc` (`agent.type: omc`, `omc.team_spec: "1:claude"`).
+  Each ticket runs `omc team 1:claude "<task>"` in an isolated workspace.
+- Tracker: Linear, project "New Agent". Model: `claude-sonnet-5-5` (workers);
+  the GitHub Actions gates (jury, Merge Doctor) use Opus.
 - Repo: `https://github.com/starlinkee/new-agent`.
 
 ## Required config in `.contrabass/WORKFLOW.md`
@@ -48,7 +49,7 @@ Then put a ticket in Todo in the Linear project "New Agent".
 ```yaml
 omc:
   binary_path: omc
-  team_spec: "2:claude"
+  team_spec: "1:claude"
   startup_timeout_ms: 180000   # REQUIRED, default 15 s kills the start
 team:
   worker_mode: goroutine       # REQUIRED, see below
@@ -58,10 +59,10 @@ team:
 `worker_mode: tmux`. In that mode it starts a pane running a bare `omc team`
 with no spec and no task, so `omc` only prints its usage and the run ends in
 about 3 seconds with `success_unverified_branch_unchanged`. With `goroutine`
-it uses the OMC runner, which calls `omc team 2:claude "<task>"`.
+it uses the OMC runner, which calls `omc team 1:claude "<task>"`.
 
 **Why `startup_timeout_ms: 180000`:** Contrabass kills `omc team` after 15 s
-by default, but starting two Claude workers takes longer. The run then fails
+by default, but starting a Claude worker takes longer. The run then fails
 with `signal: killed` and is retried in a loop, opening and closing
 `omc-team-*` sessions.
 
@@ -94,11 +95,22 @@ ticket `Done` when it shuts down, so tickets became Done with an unmerged or
 missing PR. `cb start` therefore also starts `scripts/linear_sync.py` (tmux
 session `linearsync`, every 60 s). GitHub is the source of truth:
 
-| GitHub | Linear |
+| GitHub | Linear / action |
 |--------|--------|
 | PR merged | Done |
 | PR open | In Review (state created on demand, type `completed`) |
+| jury APPROVED this exact head, mergeable, no doctor pending | squash-merge that commit, Done |
+| jury REJECTED or conflicts | label `needs-expert-review` -> Merge Doctor, max 3, then Backlog |
+| no verdict for the head | start the jury again (`workflow_dispatch`), max 3 per head, then Backlog |
+| PR labeled `needs-human` | Backlog (parked for a person) |
 | no PR 10 min after Done | Todo (redo), max 2 times, then Backlog |
+| a blocker's PR not merged | Backlog; Todo once all blockers are merged |
+| `master-tests.yml` red | auto-merge + doctor paused, one "Fix failing tests on master" ticket |
+
+The full rule set is in the docstring of `scripts/linear_sync.py`; the ticket-side
+view is in `docs/agents.md`. Only the reconciler's own tickets (the project in
+`.contrabass/WORKFLOW.md`) are touched. After changing the script, restart only it
+with `cb sync-restart` (safe while agents run).
 
 The state type must be `completed`: Contrabass maps Linear types to its own
 states, and `started` would be re-run as an orphan. `cb sync-log` shows what it did.
@@ -178,33 +190,40 @@ states, and `started` would be re-run as an orphan. `cb sync-log` shows what it 
   exits, unless detached with `setsid nohup`.
 - **Default branch** is `master`; `WORKFLOW.md` now says `origin/master`
   in the rebase step.
-- **GitHub secrets:** `ANTHROPIC_API_KEY` must exist. If the key is not
-  scoped to a workspace, also add `ANTHROPIC_WORKSPACE_ID` (the scripts send
-  it as the `anthropic-workspace-id` header). Without it the AI Jury job
-  fails with `This API key is not scoped to a workspace`.
+- **GitHub secrets:** `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`;
+  the gates run on the Claude subscription) and `LINEAR_API_KEY` (the jury and
+  the doctor read the ticket). `ANTHROPIC_API_KEY` is not used; the scripts
+  drop it, because it would take priority over the subscription token.
 - The label `needs-expert-review` must exist in the repo (it does).
+  `needs-human` is created by the Merge Doctor when it first needs it.
 - **Adding the label:** use `gh issue edit <n> --add-label needs-expert-review`
   (or the REST API). `gh pr edit --add-label` fails on gh 2.46 with a
   Projects (classic) GraphQL deprecation error and adds nothing.
 - **Merge doctor is autonomous.** The label `needs-expert-review` (added by the
-  worker when it cannot rebase, or by `linear_sync.py` when a PR has merge
-  conflicts) starts `merge-doctor.yml`. Opus (Claude Code CLI, subscription
-  token) rebases the PR branch onto master, resolves the conflicts, runs
-  `npm run test:ai` and fixes failures. `run_merge_doctor.py` then re-checks
-  (on top of master, no conflict markers, tests green) and pushes with
-  `--force-with-lease`; the agent itself has no push credentials. A push with
-  `GITHUB_TOKEN` does not start the jury, so the reconciler reopens the PR
-  (`retrigger_jury`), the jury reviews, and the reconciler squash-merges.
-  If the doctor fails, the reconciler retries (`MAX_DOCTOR`) and then parks the
-  ticket in Backlog with a comment.
+  worker when it cannot finish, or by `linear_sync.py` when a PR conflicts or the
+  jury rejected its head) starts `merge-doctor.yml`. Opus (Claude Code CLI,
+  subscription token) rebases the PR branch onto master, resolves the conflicts,
+  fixes the jury's blocking findings, runs `npm run test:ai` and fixes failures.
+  Neither Opus nor the tests see a GitHub or Linear token. `run_merge_doctor.py`
+  then re-checks (on top of master, no conflict markers, tests green), pushes with
+  `--force-with-lease` and starts the jury on the new head (`gh workflow run`,
+  because a `GITHUB_TOKEN` push raises no PR event). The label is removed when the
+  run ends. If Opus changes nothing for a rejection, it labels the PR
+  `needs-human` and the reconciler parks the ticket instead of retrying.
+- **The jury runs on `pull_request_target`** as well, so a PR can never change the
+  workflow or the script that reviews it. PR code only runs in its `tests` job,
+  which has no secrets. The verdict comment carries a hidden
+  `<!-- ai-jury verdict=... sha=... -->` marker; only a verdict for the PR's current
+  head counts, and the merge uses `--match-head-commit`. The check `jury-review`
+  that branch protection on `master` requires is a commit status that
+  `run_jury.py` sets on the reviewed head (a `pull_request_target` job's own check
+  run belongs to the base commit and cannot satisfy it).
 - **Merge doctor must use `pull_request_target`.** GitHub does not run
   `pull_request` workflows for a PR with merge conflicts. Scripts are checked
   out from the base branch (`_trusted/`), the PR branch separately, and only
   same-repo branches are processed.
 - **Two clones drift apart** (WSL and Windows). Work in WSL, sync via GitHub,
   and keep `WORKFLOW.md` identical in both.
-- **Playwright QA** (`npm run test:ai`): the WSL clone has no `package.json`
-  yet. When the app exists, run `npx playwright install --with-deps chromium`.
 
 ## Security
 
@@ -232,6 +251,7 @@ ln -sf ~/new-agent/scripts/cb ~/.local/bin/cb
 | `cb start` / `cb stop` / `cb restart` | control the pipeline. `stop`/`restart`/`clean` **refuse while agents are running**; `--force` overrides |
 | `cb status` | sessions and the TUI header (agents, tokens, errors) |
 | `cb agents` | list `omc-team-*` agent sessions; `cb agents <session>` attaches |
+| `cb sync-restart` | restart only the Linear reconciler, e.g. after pulling a new `linear_sync.py` (safe while agents run) |
 | `cb clean` | stop and wipe workspaces, worktrees, state and `symphony/*` branches (asks first) |
 
 From Windows: `wsl -d Ubuntu -e bash -lc "cb status"`, or `wsl -d Ubuntu -e bash -lc cb`
@@ -295,7 +315,7 @@ more than a few seconds and commits appear on `symphony/<ticket>`.
 | `signal: killed` in `start_failed`, sessions open/close in a loop | `omc.startup_timeout_ms` too low |
 | `unknown role "lead"` | old `.claude/omc.jsonc` committed; commit the corrected one |
 | `branch ... already exists` on every retry | stale worktree, see gotchas |
-| Jury fails: `not scoped to a workspace` | add `ANTHROPIC_WORKSPACE_ID` secret |
+| Jury posts no verdict, `the tests job left no outcome` | the tests job crashed; see its log (the reconciler restarts it, max 3 per head) |
 
 Also check `git log master..symphony/<ticket>` in the WSL clone to see
 whether the agents produced commits.

@@ -1,0 +1,28 @@
+name: Master tests
+# Every PR is tested merged with the master of its time, but two PRs that each passed can
+# still break master together. The reconciler (scripts/linear_sync.py) reads the latest
+# result: while it is red, auto-merge pauses and one "Fix failing tests on master" ticket
+# is queued. Re-run this workflow to clear a flaky red.
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+concurrency:
+  group: master-tests
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ai

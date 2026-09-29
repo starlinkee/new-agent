@@ -1,21 +1,115 @@
 name: AI Adversarial Jury
+run-name: AI Jury PR #${{ github.event.pull_request.number || inputs.pr }}
+# pull_request_target: this workflow and the jury script always come from the base branch,
+# so a PR can never change the gate that reviews it. PR code only runs in the `tests` job,
+# which has no secrets and a read-only token; the jury job reads the code but never runs it.
+# Same-repo branches only.
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened]
+  # Pushes made with GITHUB_TOKEN (the Merge Doctor) raise no pull_request events, so the
+  # doctor and the reconciler (scripts/linear_sync.py) start the jury this way.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number
+        required: true
+concurrency:
+  group: ai-jury-${{ github.event.pull_request.number || inputs.pr }}
+  cancel-in-progress: true
+permissions: {}
 jobs:
-  jury-review:
+  pr:
     runs-on: ubuntu-latest
     permissions:
-      pull-requests: write
+      pull-requests: read
+    outputs:
+      number: ${{ steps.pr.outputs.number }}
+      sha: ${{ steps.pr.outputs.sha }}
+      head: ${{ steps.pr.outputs.head }}
+      base: ${{ steps.pr.outputs.base }}
+    steps:
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number || inputs.pr }}
+        run: |
+          gh api "repos/${{ github.repository }}/pulls/$PR" --jq '
+            "number=\(.number)", "sha=\(.head.sha)", "head=\(.head.ref)", "base=\(.base.ref)",
+            "same_repo=\(.head.repo.full_name == .base.repo.full_name)"' >> "$GITHUB_OUTPUT"
+      - if: steps.pr.outputs.same_repo != 'true'
+        run: |
+          echo "PR from a fork: not reviewed automatically."
+          exit 1
+
+  # The PR head merged with the current base, like the squash merge will be. Any failure,
+  # including a broken install, counts as "failed"; a PR can never report its own result.
+  tests:
+    needs: pr
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ needs.pr.outputs.sha }}
           fetch-depth: 0
-      # Three dots: only what the PR itself changed, measured from the merge base. A plain
-      # two-dot diff against the *current* base shows every commit that landed on the base
-      # since this run was created (e.g. while it waited for approval) as a revert by the PR.
-      - run: git diff origin/${{ github.base_ref }}...HEAD > pr_diff.txt
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Merge the base in and run the suite
+        env:
+          BASE: ${{ needs.pr.outputs.base }}
+          OUT: ${{ runner.temp }}/tests
+        run: |
+          mkdir -p "$OUT"
+          if ! git -c user.name=ci -c user.email=ci@localhost merge -q --no-edit "origin/$BASE"; then
+            echo conflict > "$OUT/outcome.txt"
+            exit 0
+          fi
+          if { npm ci && npx playwright install --with-deps chromium && npm run test:ai; } > "$OUT/test_output.txt" 2>&1
+          then echo passed > "$OUT/outcome.txt"
+          else echo failed > "$OUT/outcome.txt"
+          fi
+          tail -n 40 "$OUT/test_output.txt"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tests
+          path: ${{ runner.temp }}/tests
+
+  jury:
+    needs: [pr, tests]
+    if: ${{ !cancelled() && needs.pr.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      pull-requests: write
+      contents: read
+      statuses: write  # the required `jury-review` status, set on the PR head (run_jury.py)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: _trusted
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.pr.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: pr
+      - uses: actions/download-artifact@v4
+        continue-on-error: true  # no artifact = the tests job broke; run_jury.py posts no verdict
+        with:
+          name: tests
+          path: tests
+      # Three dots: only what the PR itself changed, measured from the merge base, so commits
+      # that landed on the base in the meantime are not shown as reverts.
+      - env:
+          BASE: ${{ needs.pr.outputs.base }}
+          SHA: ${{ needs.pr.outputs.sha }}
+        run: git -C pr diff "origin/$BASE...$SHA" -- . ':(exclude)package-lock.json' > pr_diff.txt
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -25,8 +119,11 @@ jobs:
       - run: npm install -g @anthropic-ai/claude-code
       - env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_REF: ${{ github.head_ref }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-        run: python .github/scripts/run_jury.py
+          PR_NUMBER: ${{ needs.pr.outputs.number }}
+          HEAD_SHA: ${{ needs.pr.outputs.sha }}
+          HEAD_REF: ${{ needs.pr.outputs.head }}
+          BASE_REF: ${{ needs.pr.outputs.base }}
+        run: python _trusted/.github/scripts/run_jury.py

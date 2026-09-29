@@ -1,23 +1,26 @@
 import json
 import os
-import re
 import subprocess
 import sys
-import urllib.request
 
-from claude_cli import run_claude_agent
+from claude_cli import clean_env, run_claude_agent
+from linear_ticket import ticket_text
+from verdict import MARKER_RE
 
 # Runs in a checkout of the PR branch (the scripts themselves come from the base
 # branch, see merge-doctor.yml). Fires when the PR is labeled "needs-expert-review":
-# by the worker when it could not rebase, or by the reconciler when the PR conflicts
-# or was rejected by the jury and no rework worker picked it up.
+# by the worker when it could not finish, or by the reconciler when the PR conflicts
+# or the jury rejected its current head. The label is removed when the run ends.
 #
 # Opus rebases the branch onto the base branch, resolves the conflicts, fixes
 # whatever breaks and addresses the jury's blocking findings, if the last verdict is a
 # rejection. This script then re-checks the result itself (on top of base,
 # no conflict markers, test suite green) and only then pushes with
-# --force-with-lease. The agent never gets push credentials. The jury reviews the
-# new head and the reconciler merges the PR once it is approved.
+# --force-with-lease. Neither the agent nor the code it runs sees any credential
+# (claude_cli.clean_env). After the push this script starts the jury on the new head,
+# and the reconciler merges the PR once that head is approved.
+# If the doctor can neither fix nor refute a rejection, it labels the PR `needs-human`
+# and the reconciler parks the ticket for a person instead of retrying.
 
 PR = os.environ["PR_NUMBER"]
 BASE = os.environ["BASE_REF"]
@@ -26,41 +29,13 @@ REPO = os.environ["GITHUB_REPOSITORY"]
 TOKEN = os.environ["GH_TOKEN"]
 
 
-def run(*cmd, check=True):
-    return subprocess.run(cmd, capture_output=True, text=True, check=check)
+def run(*cmd, check=True, env=None):
+    return subprocess.run(cmd, capture_output=True, text=True, check=check, env=env)
 
 
 def comment(body):
     subprocess.run(["gh", "pr", "comment", PR, "--body-file", "-"],
                    input=f"**AI Merge Doctor (Opus)**\n\n{body}", text=True, check=True)
-
-
-def ticket_text():
-    """Title and description of the Linear ticket this branch (symphony/new-N) implements.
-
-    The description is the original intent; conflict and review fixes must not lose it.
-    Best effort: without the key or on any error the doctor works from the PR alone.
-    """
-    m = re.fullmatch(r"symphony/(new-\d+)", HEAD)
-    if not m or not os.environ.get("LINEAR_API_KEY"):
-        return ""
-    ident = m.group(1).upper()
-    try:
-        req = urllib.request.Request(
-            "https://api.linear.app/graphql",
-            data=json.dumps({"query": "query($n:Float!){issues(filter:{number:{eq:$n}})"
-                             "{nodes{identifier title description}}}",
-                             "variables": {"n": int(ident.split("-")[1])}}).encode(),
-            headers={"Authorization": os.environ["LINEAR_API_KEY"],
-                     "Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=30) as r:
-            nodes = json.load(r)["data"]["issues"]["nodes"]
-        issue = next(i for i in nodes if i["identifier"] == ident)
-        return f"{ident}: {issue['title']}\n\n{issue['description'] or '(no description)'}"
-    except Exception as e:
-        print(f"could not read the Linear ticket: {e}", file=sys.stderr)
-        return ""
 
 
 def tail(text, n=6000):
@@ -76,15 +51,25 @@ run("git", "config", "user.name", author)
 run("git", "config", "user.email", f"{author_id}+{author}@users.noreply.github.com")
 run("git", "fetch", "origin", BASE)
 original_head = run("git", "rev-parse", "HEAD").stdout.strip()
-ticket = ticket_text()
+ticket = ticket_text(HEAD)
 pr_body = run("gh", "pr", "view", PR, "--json", "body", "--jq", ".body").stdout
 
 def jury_findings():
-    """Body of the newest jury comment if it is a rejection, else empty."""
-    comments = run("gh", "api", f"repos/{REPO}/issues/{PR}/comments?per_page=100",
-                   "--jq", '[.[] | select(.user.login | startswith("github-actions")) '
-                   '| select(.body | test("STATUS: *(APPROVED|REJECTED)"))] | last | .body // ""').stdout
-    return comments if "REJECTED" in comments[:200] else ""
+    """The jury's rejection of the head we start from (its comment body), else empty."""
+    comments = json.loads(run("gh", "api", f"repos/{REPO}/issues/{PR}/comments?per_page=100").stdout or "[]")
+    for c in reversed(comments):
+        m = MARKER_RE.search(c["body"] or "")
+        if m and c["user"]["login"].startswith("github-actions") and m.group(2) == original_head:
+            return c["body"] if m.group(1) == "REJECTED" else ""
+    return ""
+
+
+def escalate(body):
+    """Hand the PR to a person: the reconciler parks a ticket whose PR has this label."""
+    run("gh", "label", "create", "needs-human", "--repo", REPO, "--color", "B60205",
+        "--description", "The AI pipeline gave up on this PR; a person decides", "--force", check=False)
+    run("gh", "issue", "edit", PR, "--repo", REPO, "--add-label", "needs-human", check=False)
+    comment(body)
 
 
 findings = jury_findings()
@@ -112,6 +97,8 @@ Rules:
   (minimal change, plus a test for the fixed behavior) and commit the fix. Non-blocking
   remarks are optional.
 - Never run `git push`, never rewrite {BASE}, never use `git merge`.
+- If you are convinced a blocking finding is wrong, do not change code for it; explain
+  why in your summary. A person then decides.
 - Finish with a short plain-text summary: what conflicted, how you resolved it,
   and the final test result.
 """
@@ -146,7 +133,7 @@ markers = run("git", "grep", "-n", "-E", "^(<<<<<<<|>>>>>>>) ", check=False).std
 if markers.strip():
     problems.append("conflict markers are still in the tree:\n" + tail(markers, 1500))
 if not problems:
-    result = run("npm", "run", "test:ai", check=False)
+    result = run("npm", "run", "test:ai", check=False, env=clean_env())
     if result.returncode != 0:
         problems.append("the test suite fails:\n" + tail(result.stdout + result.stderr))
 
@@ -157,6 +144,13 @@ if problems:
 
 new_head = run("git", "rev-parse", "HEAD").stdout.strip()
 if new_head == original_head:
+    if findings:
+        # Retrying would only repeat this: the same head, the same rejection, the same answer.
+        escalate("The jury rejected this head and I changed nothing, so the rejection stands. "
+                 "A person has to decide: fix the PR, or override the jury (merge it by hand). "
+                 "Then remove the `needs-human` label and move the Linear ticket back to Todo."
+                 f"\n\nMy reasoning:\n\n{summary}")
+        sys.exit(1)
     comment(f"The branch already sits on top of `{BASE}` and the tests pass, so there was "
             "nothing to change. A stale `mergeable` flag on GitHub is the likely cause.")
     sys.exit(0)
@@ -171,5 +165,8 @@ if push.returncode != 0:
             f"```\n{tail(push.stderr.replace(TOKEN, '***'), 1500)}\n```")
     sys.exit(1)
 
+# A GITHUB_TOKEN push raises no pull_request event; start the jury on the new head directly.
+jury = run("gh", "workflow", "run", "ai-jury.yml", "--repo", REPO, "--ref", BASE, "-f", f"pr={PR}", check=False)
+started = "The jury reviews it next" if jury.returncode == 0 else "Could not start the jury (the reconciler will)"
 comment(f"Rebased onto `{BASE}`, tests pass, pushed `{new_head[:7]}`. "
-        f"The jury reviews it next and it merges automatically once approved.\n\n{summary}")
+        f"{started}; it merges automatically once approved.\n\n{summary}")

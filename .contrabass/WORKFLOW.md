@@ -2,7 +2,7 @@
 max_concurrency: 5
 poll_interval_ms: 2000
 max_retry_backoff_ms: 240000
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 project_url: https://linear.app/new-agent/project/new-agent-linear-dea87a9266f5
 agent_timeout_ms: 1800000
 stall_timeout_ms: 600000
@@ -36,27 +36,19 @@ For each blocker `NEW-<N>` you find, check that its PR is merged:
 `gh pr list --head symphony/new-<n> --state merged --json number` (lowercase `n`).
 If any blocker has no merged PR, its code is not on `origin/master` yet, so do
 NOT start: make no commits, open no PR, and stop right away with a one-line
-explanation of which blockers are unmerged. The reconciler parks this ticket in
-Backlog and moves it back to Todo once the blockers are merged. If the list is
-empty, continue.
+explanation of which blockers are unmerged. The reconciler moves this ticket to
+Backlog while any blocker's PR is unmerged and back to Todo once all are merged;
+such a stop does not count as a failed attempt. If every blocker is merged, continue.
 
-## First: is this a rework of an existing PR?
+## First: does this ticket already have an open PR?
 
-You start with an empty context, so check before writing anything:
+`gh pr list --head symphony/<ticket-id-lowercase> --state open --json number,url`
+(the branch is `symphony/new-<N>` for ticket NEW-<N>).
 
-1. Find this ticket's branch and PR: `gh pr list --head symphony/<ticket-id-lowercase> --state open --json number,url`
-   (the branch is `symphony/new-<N>` for ticket NEW-<N>).
-2. If an open PR exists, this is a **rework**, not a new implementation:
-   - `git fetch origin && git checkout -B symphony/new-<N> origin/symphony/new-<N>`
-   - Read every comment on the PR (`gh pr view <number> --comments`). The newest
-     comment starting with `STATUS: REJECTED` is the AI jury's verdict: it lists
-     the blocking issues. Also check whether the PR reports merge conflicts.
-   - Fix exactly those findings (and rebase onto `origin/master` if there are
-     conflicts), keep the existing work, add tests for the fixed behavior, run
-     `npm run test:ai`, then `git push --force-with-lease` to the same branch.
-     Do NOT open a new PR and do NOT start over from scratch.
-   - After pushing, the jury re-reviews automatically; you are done.
-3. If no PR exists, continue with the normal flow below.
+If an open PR exists, stop right away with a one-line note: make no commits and
+do not push. That PR already belongs to the review pipeline: the AI jury tests and
+reviews it, the Merge Doctor fixes rejections and conflicts on the same branch,
+and the reconciler merges it. A second agent on the branch would only race them.
 
 ## How to work
 
@@ -79,6 +71,13 @@ custom roles on top of it.
   chromium` first if `node_modules` is missing). Headless only, never
   `--ui`. Read the output yourself; the run counts as verified only if at
   least one test ran and all passed.
+- If tests you did not touch also fail on a clean `origin/master`, master
+  itself is broken: do not fix that here (a separate ticket does). Say so in
+  the PR description.
+- What happens after the PR: CI runs the whole suite on your branch merged
+  with master, and the AI jury checks the diff against this ticket's Goal,
+  Scope and Acceptance. In the PR description, list each acceptance item and
+  the test that covers it.
 - If verification fails, fix and re-run. Stop after 4 failed fix loops and
   escalate (see "If everything fails" below).
 

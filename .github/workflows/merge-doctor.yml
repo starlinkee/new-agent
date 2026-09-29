@@ -1,10 +1,12 @@
 name: AI Merge Doctor
+run-name: Merge Doctor PR #${{ github.event.pull_request.number }}
 # pull_request_target (not pull_request): a PR with merge conflicts has no
 # merge commit, and GitHub does not run pull_request workflows for it - which
 # is exactly the case this workflow exists for. The scripts run from the base
 # branch (checked out to _trusted); the PR branch is checked out separately and
-# only Opus and the test suite touch it. The PR checkout keeps no push
-# credentials: the trusted script pushes after verifying the result.
+# only Opus and the test suite touch it. Neither checkout keeps credentials and
+# Claude runs without GitHub/Linear secrets in its environment: the trusted script
+# pushes after verifying the result, then starts the jury on the new head.
 # Same-repo branches only, so a fork can never get its code run with secrets.
 on:
   pull_request_target:
@@ -21,11 +23,14 @@ jobs:
       cancel-in-progress: false
     permissions:
       pull-requests: write
+      issues: write      # labels: needs-human, and releasing needs-expert-review
       contents: write
+      actions: write     # start the jury on the pushed head (workflow_dispatch)
     steps:
       - uses: actions/checkout@v4
         with:
           path: _trusted
+          persist-credentials: false
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.ref }}
@@ -54,3 +59,10 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: python ../_trusted/.github/scripts/run_merge_doctor.py
+      # The label means "a doctor run is pending or running": the reconciler never merges
+      # while it is set, and re-adds it for the next attempt.
+      - name: Release the label
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh issue edit ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --remove-label needs-expert-review || true

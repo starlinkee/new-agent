@@ -1,28 +1,28 @@
 {
-  // Pins every oh-my-claudecode role to Sonnet 5 so the automated
+  // Pins every oh-my-claudecode role to Sonnet 5.5 so the automated
   // coding/testing/rebase loop never auto-routes to a pricier model.
-  // Opus 5 is reserved for the low-frequency GitHub Actions gates
+  // Opus is reserved for the low-frequency GitHub Actions gates
   // (AI Jury, merge-doctor) - see .github/scripts/.
   //
   // Role keys verified against a live install (`omc info` prints the
   // allowed-roles error listing them). All 15 known roles are pinned.
   "team": {
     "roleRouting": {
-      "orchestrator": { "model": "claude-sonnet-5" },
-      "planner": { "model": "claude-sonnet-5" },
-      "analyst": { "model": "claude-sonnet-5" },
-      "architect": { "model": "claude-sonnet-5" },
-      "executor": { "model": "claude-sonnet-5" },
-      "debugger": { "model": "claude-sonnet-5" },
-      "critic": { "model": "claude-sonnet-5" },
-      "code-reviewer": { "model": "claude-sonnet-5" },
-      "security-reviewer": { "model": "claude-sonnet-5" },
-      "test-engineer": { "model": "claude-sonnet-5" },
-      "designer": { "model": "claude-sonnet-5" },
-      "writer": { "model": "claude-sonnet-5" },
-      "code-simplifier": { "model": "claude-sonnet-5" },
-      "explore": { "model": "claude-sonnet-5" },
-      "document-specialist": { "model": "claude-sonnet-5" }
+      "orchestrator": { "model": "claude-sonnet-5-5" },
+      "planner": { "model": "claude-sonnet-5-5" },
+      "analyst": { "model": "claude-sonnet-5-5" },
+      "architect": { "model": "claude-sonnet-5-5" },
+      "executor": { "model": "claude-sonnet-5-5" },
+      "debugger": { "model": "claude-sonnet-5-5" },
+      "critic": { "model": "claude-sonnet-5-5" },
+      "code-reviewer": { "model": "claude-sonnet-5-5" },
+      "security-reviewer": { "model": "claude-sonnet-5-5" },
+      "test-engineer": { "model": "claude-sonnet-5-5" },
+      "designer": { "model": "claude-sonnet-5-5" },
+      "writer": { "model": "claude-sonnet-5-5" },
+      "code-simplifier": { "model": "claude-sonnet-5-5" },
+      "explore": { "model": "claude-sonnet-5-5" },
+      "document-specialist": { "model": "claude-sonnet-5-5" }
     }
   }
 }

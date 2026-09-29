@@ -10,6 +10,7 @@
 #   cb status    show sessions and the TUI header
 #   cb app-log   output of the app runner (scripts/app_sync.sh, http://localhost:3000)
 #   cb sync-log  last lines of the Linear reconciler (scripts/linear_sync.py)
+#   cb sync-restart  restart only the reconciler (safe while agents run)
 #   cb agents    list agent sessions; "cb agents <session>" attaches to one
 #   cb clean     stop and remove stale workspaces/worktrees/state (asks first)
 #   cb           same as: cb start && cb attach
@@ -30,6 +31,14 @@ if [ -z "${LINEAR_API_KEY:-}" ] && [ -f "$HOME/.bashrc" ]; then
 fi
 
 running() { tmux has-session -t "$SESSION" 2>/dev/null; }
+
+# Keeps Linear honest: Contrabass marks a finished (or shut down) ticket Done even when
+# the PR is unmerged or missing; this moves it to In Review / Todo / Done by PR state.
+start_sync() {
+  tmux has-session -t "=$SYNC" 2>/dev/null && return
+  ( cd "$REPO" && setsid nohup tmux new-session -d -s "$SYNC" -e "LINEAR_API_KEY=$LINEAR_API_KEY" \
+      "python3 scripts/linear_sync.py; echo 'linear_sync exited'; sleep 600" >/dev/null 2>&1 </dev/null )
+}
 
 # Agents are busy when Contrabass itself reports Agents: N/.. with N > 0. Leftover
 # omc-team-* sessions of finished runs do not count (they are stale and safe to kill).
@@ -54,12 +63,7 @@ start() {
   cd "$REPO"
   # env -u TMUX: otherwise omc adopts the TUI window as its leader and no worker starts.
   # sleep keeps the pane open so a startup error stays readable.
-  # Keeps Linear honest: Contrabass marks a finished (or shut down) ticket Done even when
-  # the PR is unmerged or missing; this moves it to In Review / Todo / Done by PR state.
-  if ! tmux has-session -t "=$SYNC" 2>/dev/null; then
-    setsid nohup tmux new-session -d -s "$SYNC" -e "LINEAR_API_KEY=$LINEAR_API_KEY" \
-      "python3 scripts/linear_sync.py; echo 'linear_sync exited'; sleep 600" >/dev/null 2>&1 </dev/null
-  fi
+  start_sync
   setsid nohup tmux new-session -d -s "$SESSION" -x 200 -y 50 \
     -e "LINEAR_API_KEY=$LINEAR_API_KEY" -e "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}" -e "PATH=$PATH" \
     "env -u TMUX -u TMUX_PANE contrabass --config .contrabass/WORKFLOW.md --port 8080; echo; echo 'contrabass exited'; sleep 600" \
@@ -96,6 +100,11 @@ case "${1:-}" in
       echo "!! reconciler: NO successful round for 10+ min - see 'cb sync-log'"
     fi ;;
   app-log) tmux capture-pane -p -t "=$APP:" -S -200 | grep -v '^\s*$' | tail -"${2:-30}" ;;
+  sync-restart)
+    [ -n "${LINEAR_API_KEY:-}" ] || { echo "LINEAR_API_KEY is not set (add it to ~/.bashrc)"; exit 1; }
+    tmux kill-session -t "=$SYNC" 2>/dev/null || true
+    start_sync
+    echo "reconciler restarted (cb sync-log)" ;;
   sync-log) tmux capture-pane -p -t "=$SYNC:" -S -200 | grep -v '^\s*$' | tail -"${2:-30}" ;;
   agents)
     if [ -n "${2:-}" ]; then exec tmux attach -t "$2"; fi
@@ -112,5 +121,5 @@ case "${1:-}" in
     rm -rf .contrabass/state
     echo "clean" ;;
   ""|run)  start; exec tmux attach -t "$SESSION" ;;
-  *) sed -n 2,11p "$0"; exit 1 ;;
+  *) sed -n 2,16p "$0"; exit 1 ;;
 esac
