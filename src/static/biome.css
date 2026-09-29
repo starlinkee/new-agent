@@ -1,0 +1,6 @@
+#biome-root { position: relative; width: 100%; overflow: hidden; background: #87ceeb; border-radius: 6px; }
+#biome-canvas { display: block; width: 100%; height: 75vh; touch-action: none; }
+#biome-hud { position: absolute; inset: 0; pointer-events: none; }
+#biome-name-form { position: absolute; left: 0.75rem; top: 0.75rem; display: flex; gap: 0.4rem; padding: 0.4rem; background: rgba(255, 255, 255, 0.85); border-radius: 6px; pointer-events: auto; }
+#biome-name { width: 9rem; }
+#biome-status { min-height: 1.5em; }

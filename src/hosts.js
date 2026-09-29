@@ -1,7 +1,7 @@
 // The Cloudflare Tunnel (scripts/tunnel.yml) publishes every page on its own subdomain, e.g.
 // https://world.viktorbobinski.com. On such a host "/" is that page, and links to the other
 // pages point at their own subdomains, since each host serves only its own paths.
-const SUBDOMAINS = { home: "/", todos: "/todos", world: "/world", pixels: "/pixels", polls: "/polls", blobs: "/blobs", pulse: "/pulse" };
+const SUBDOMAINS = { home: "/", todos: "/todos", world: "/world", pixels: "/pixels", polls: "/polls", blobs: "/blobs", pulse: "/pulse", biome: "/biome" };
 const LINKED = new Map(Object.entries(SUBDOMAINS).map(([name, page]) => [page, name]));
 
 function publicSite(host) {
