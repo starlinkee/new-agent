@@ -1,4 +1,4 @@
-import { HttpError, readJson, send } from "./todos.js";
+import { HttpError, readJson, send } from "./http.js";
 
 export const BOARD_WIDTH = 64;
 export const BOARD_HEIGHT = 64;
@@ -8,11 +8,22 @@ export const PALETTE = [
   "#2e7d32", "#26c6da", "#1e88e5", "#283593",
   "#8e24aa", "#ec407a", "#8d6e63", "#ffccbc",
 ];
+// A paint request is tiny ({"x":63,"y":63,"color":15}); this is a pixels decision, not a todos one.
+export const MAX_PIXEL_BODY_BYTES = 1024;
+// Per-client paint throttle: a burst of PAINT_BURST paints, refilled at PAINT_REFILL_PER_SECOND.
+// Wiping the whole 4096-pixel board from one client takes ~17 minutes instead of seconds.
+export const PAINT_BURST = 30;
+export const PAINT_REFILL_PER_SECOND = 4;
+
+const HEX = "0123456789abcdef";
 
 // In-memory board. Colours are palette indexes; each pixel remembers when it was last painted.
 export class PixelStore {
   #colors = new Uint8Array(BOARD_WIDTH * BOARD_HEIGHT);
   #updatedAt = new Array(BOARD_WIDTH * BOARD_HEIGHT).fill(null);
+  // ASCII hex digit per pixel, kept in sync with #colors so serialize() does no per-pixel work.
+  #hex = new Uint8Array(BOARD_WIDTH * BOARD_HEIGHT).fill(HEX.charCodeAt(0));
+  #serialized = null;
   #listeners = new Set();
 
   get width() {
@@ -37,9 +48,10 @@ export class PixelStore {
     return { x, y, color: this.#colors[i], updatedAt: this.#updatedAt[i] };
   }
 
-  // Row-major, one hex digit (palette index) per pixel.
+  // Row-major, one hex digit (palette index) per pixel. Cached until the next paint.
   serialize() {
-    return Array.from(this.#colors, (c) => c.toString(16)).join("");
+    this.#serialized ??= Buffer.from(this.#hex.buffer, this.#hex.byteOffset, this.#hex.length).toString("latin1");
+    return this.#serialized;
   }
 
   paint(x, y, color) {
@@ -48,9 +60,18 @@ export class PixelStore {
     const i = y * BOARD_WIDTH + x;
     const updatedAt = new Date().toISOString();
     this.#colors[i] = color;
+    this.#hex[i] = HEX.charCodeAt(color);
+    this.#serialized = null;
     this.#updatedAt[i] = updatedAt;
     const change = { x, y, color, updatedAt };
-    for (const listener of [...this.#listeners]) listener({ ...change });
+    // The paint is committed: a failing listener must not turn it into an error for the painter.
+    for (const listener of [...this.#listeners]) {
+      try {
+        listener({ ...change });
+      } catch (err) {
+        console.error("pixel listener failed", err);
+      }
+    }
     return change;
   }
 
@@ -63,6 +84,38 @@ export class PixelStore {
 }
 
 export const pixelStore = new PixelStore();
+
+// Token bucket per client key. take() returns 0 when allowed, else seconds to wait.
+export class RateLimiter {
+  #buckets = new Map();
+
+  constructor({ burst = PAINT_BURST, refillPerSecond = PAINT_REFILL_PER_SECOND, now = () => Date.now() } = {}) {
+    this.burst = burst;
+    this.refillPerSecond = refillPerSecond;
+    this.now = now;
+  }
+
+  take(key) {
+    const now = this.now();
+    const bucket = this.#buckets.get(key) ?? { tokens: this.burst, at: now };
+    bucket.tokens = Math.min(this.burst, bucket.tokens + ((now - bucket.at) / 1000) * this.refillPerSecond);
+    bucket.at = now;
+    this.#buckets.set(key, bucket);
+    this.#prune(now);
+    if (bucket.tokens >= 1) {
+      bucket.tokens -= 1;
+      return 0;
+    }
+    return Math.max(1, Math.ceil((1 - bucket.tokens) / this.refillPerSecond));
+  }
+
+  // Forget buckets that have fully refilled, so the map cannot grow without bound.
+  #prune(now) {
+    if (this.#buckets.size < 10_000) return;
+    const fullAfterMs = (this.burst / this.refillPerSecond) * 1000;
+    for (const [key, b] of this.#buckets) if (now - b.at >= fullAfterMs) this.#buckets.delete(key);
+  }
+}
 
 function parseCoordinate(value, name, max) {
   if (value === null || !/^\d+$/.test(value) || Number(value) >= max) {
@@ -78,15 +131,15 @@ function requireInteger(value, name, max) {
   return value;
 }
 
-async function route(store, req, res, url) {
-  const isAt = url.pathname === "/api/pixels/at";
-  if (isAt) {
-    if (req.method !== "GET") throw new HttpError(405, "method not allowed", { allow: "GET" });
-    const x = parseCoordinate(url.searchParams.get("x"), "x", store.width);
-    const y = parseCoordinate(url.searchParams.get("y"), "y", store.height);
+async function route(store, limiter, req, res, url) {
+  const read = req.method === "GET" || req.method === "HEAD";
+  if (url.pathname === "/api/pixels/at") {
+    if (!read) throw new HttpError(405, "method not allowed", { allow: "GET, HEAD" });
+    const x = parseCoordinate(url.searchParams.get("x"), "x", BOARD_WIDTH);
+    const y = parseCoordinate(url.searchParams.get("y"), "y", BOARD_HEIGHT);
     return send(res, 200, store.get(x, y), { "cache-control": "no-store" });
   }
-  if (req.method === "GET") {
+  if (read) {
     return send(
       res,
       200,
@@ -95,29 +148,30 @@ async function route(store, req, res, url) {
     );
   }
   if (req.method === "POST") {
-    const body = await readJson(req);
-    const x = requireInteger(body.x, "x", store.width);
-    const y = requireInteger(body.y, "y", store.height);
-    const color = requireInteger(body.color, "color", store.palette.length);
+    const body = await readJson(req, { maxBytes: MAX_PIXEL_BODY_BYTES });
+    const x = requireInteger(body.x, "x", BOARD_WIDTH);
+    const y = requireInteger(body.y, "y", BOARD_HEIGHT);
+    const color = requireInteger(body.color, "color", PALETTE.length);
+    const wait = limiter.take(req.socket?.remoteAddress ?? "unknown");
+    if (wait > 0) throw new HttpError(429, "too many paints, slow down", { "retry-after": String(wait) });
     return send(res, 200, store.paint(x, y, color));
   }
-  throw new HttpError(405, "method not allowed", { allow: "GET, POST" });
+  throw new HttpError(405, "method not allowed", { allow: "GET, HEAD, POST" });
 }
 
 // Returns a handler for /api/pixels requests: resolves true when the request was handled.
-export function createPixelHandler(store = pixelStore) {
+export function createPixelHandler(store = pixelStore, { limiter = new RateLimiter() } = {}) {
   return async function handlePixels(req, res) {
     let url;
     try {
       url = new URL(req.url, "http://localhost");
     } catch {
-      send(res, 400, { error: "malformed request target" });
-      return true;
+      return false;
     }
     if (!/^\/api\/pixels(?:\/at)?\/?$/.test(url.pathname)) return false;
-    if (url.pathname.length > 1 && url.pathname.endsWith("/")) url.pathname = url.pathname.slice(0, -1);
+    if (url.pathname.endsWith("/")) url.pathname = url.pathname.slice(0, -1);
     try {
-      await route(store, req, res, url);
+      await route(store, limiter, req, res, url);
     } catch (err) {
       if (!(err instanceof HttpError)) throw err;
       if (res.headersSent) return true;
