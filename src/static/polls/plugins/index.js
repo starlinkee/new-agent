@@ -1,4 +1,5 @@
 import * as share from "./share.js";
+import * as countdown from "./countdown.js";
 
 // Extension point for /polls. Each plugin ticket adds exactly ONE import line and
 // ONE entry in PLUGINS below, so tickets never touch the same lines.
@@ -6,7 +7,7 @@ import * as share from "./share.js";
 // ctx = { root, toolbar, getPoll(), setPoll(poll), onVote(listener), onChange(listener) };
 // onVote listeners get { option, poll }, onChange listeners get the poll; both return an unsubscribe function.
 
-export const PLUGINS = [share];
+export const PLUGINS = [share, countdown];
 
 // One failing plugin must not stop the page; returns a function that unmounts the plugins that started.
 export function mountPlugins(ctx) {
