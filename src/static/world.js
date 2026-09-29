@@ -1,4 +1,5 @@
 import { initHud } from "/static/hud.js";
+import { createAtmosphere } from "/static/atmosphere.js";
 import { createWorld, resizeWorld, step } from "/static/world-sim.js";
 import { createEvents } from "/static/events.js";
 import { createTicker } from "/static/ticker.js";
@@ -14,6 +15,8 @@ const ticker = createTicker(document.getElementById("ticker"));
 const stats = createStats();
 const control = { paused: false, speed: 1 };
 const hud = initHud({ world, control, canvas });
+const atmosphere = createAtmosphere();
+window.__atmosphere = atmosphere;
 window.__events = events;
 document.getElementById("trigger-event").addEventListener("click", () => events.trigger(world));
 
@@ -67,7 +70,9 @@ function drawEffects() {
 }
 
 function draw() {
-  ctx.clearRect(0, 0, world.width, world.height);
+  atmosphere.draw(ctx, world.width, world.height);
+  for (const f of world.food) atmosphere.drawGlow(ctx, f.x, f.y, world.config.foodRadius);
+  for (const c of world.creatures) atmosphere.drawGlow(ctx, c.x, c.y, c.radius);
   ctx.fillStyle = "#3ddc6a";
   for (const f of world.food) {
     ctx.beginPath();
@@ -80,6 +85,7 @@ function draw() {
     const species = drawCreature(ctx, world, c);
     drawn[species] = (drawn[species] ?? 0) + 1;
   }
+  atmosphere.drawWeather(ctx);
   window.__renderStats = { drawn };
 }
 
@@ -93,6 +99,7 @@ function frame(now) {
     stats.maybeSample(world);
   }
   ticker.drain(world);
+  atmosphere.update(dt, world.width, world.height);
   draw();
   hud.draw(ctx, now);
   requestAnimationFrame(frame);
