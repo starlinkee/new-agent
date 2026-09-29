@@ -9,6 +9,22 @@ async function save(request, name, data = { creatures: [1, 2] }) {
 }
 
 test.describe("world snapshots API", () => {
+  test("list entries carry time and creature count without the data", async ({ request }) => {
+    const created = await save(request, "summary", { time: 12.5, creatures: [{}, {}, {}] });
+    try {
+      expect(created).toMatchObject({ time: 12.5, creatureCount: 3 });
+      const list = await (await request.get(URL)).json();
+      expect(list.find((s) => s.id === created.id)).toEqual(created);
+    } finally {
+      await request.delete(`${URL}/${created.id}`);
+    }
+  });
+
+  test("null data is rejected without a server error", async ({ request }) => {
+    const res = await request.post(URL, { data: { name: "null data", data: null } });
+    expect(res.status()).toBe(400);
+  });
+
   test("create/list/get/delete round trip", async ({ request }) => {
     const data = { tick: 7, nested: { a: [1, "b", null] } };
     const created = await save(request, "  first save  ", data);
@@ -17,6 +33,8 @@ test.describe("world snapshots API", () => {
       name: "first save",
       savedAt: expect.any(String),
       size: Buffer.byteLength(JSON.stringify(data)),
+      time: 0,
+      creatureCount: 0,
     });
     expect(Number.isNaN(Date.parse(created.savedAt))).toBe(false);
 

@@ -4,7 +4,9 @@
 // section in #panels (panel-stats, panel-inspector or panel-save).
 import * as statsPanel from "/static/panels/stats-panel.js";
 
-export const PANELS = [statsPanel];
+import * as savePanel from "/static/panels/save-panel.js";
+
+export const PANELS = [statsPanel, savePanel];
 
 // One failing panel must not stop the page; returns a function that unmounts the panels that started.
 export function mountPanels(ctx) {

@@ -12,7 +12,7 @@ test("world page has the three named panel slots and shows only mounted ones", a
   await expect(page.locator("#panels")).toBeVisible();
   await expect(page.locator("#panel-stats")).toBeVisible();
   await expect(page.locator("#panel-inspector")).toBeHidden();
-  await expect(page.locator("#panel-save")).toBeHidden();
+  await expect(page.locator("#panel-save")).toBeVisible();
   await expect(page.locator("canvas#world")).toBeVisible();
 });
 
