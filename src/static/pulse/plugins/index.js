@@ -3,7 +3,9 @@
 // A plugin module exports mount(ctx) and may return a cleanup function.
 // ctx = { site, getRange(), getSummary(), onData(listener), refresh(), addCard({ name, title, span, order }), headerTools }.
 
-export const PLUGINS = [];
+import * as install from "./install.js";
+
+export const PLUGINS = [install];
 
 // One failing plugin must not stop the page; returns a function that unmounts the plugins that started.
 export function mountPlugins(ctx, plugins = PLUGINS) {

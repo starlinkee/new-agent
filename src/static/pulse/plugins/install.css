@@ -1,0 +1,86 @@
+.pulse-install-intro {
+  margin: 0 0 0.75rem;
+  color: var(--pulse-muted);
+  font-size: 0.9rem;
+}
+
+.pulse-install-intro code {
+  color: var(--pulse-text);
+}
+
+.pulse-install-pre {
+  margin: 0;
+  padding: 0.85rem 1rem;
+  overflow-x: auto;
+  background: var(--pulse-bg);
+  border: 1px solid var(--pulse-border);
+  border-radius: calc(var(--pulse-radius) - 4px);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.pulse-install-pre code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--pulse-text);
+  white-space: pre;
+}
+
+.pulse-install-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+#pulse-install-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--pulse-muted);
+  font-size: 0.85rem;
+}
+
+#pulse-install-status.receiving {
+  color: var(--pulse-text);
+}
+
+#pulse-install-status.receiving::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--pulse-positive);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--pulse-positive) 25%, transparent);
+  animation: pulse-install-dot 2s ease-in-out infinite;
+}
+
+#pulse-install-copy {
+  flex: none;
+  padding: 0.4rem 0.9rem;
+  color: var(--pulse-text);
+  background: var(--pulse-surface);
+  border: 1px solid var(--pulse-border);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+#pulse-install-copy:hover {
+  border-color: var(--pulse-accent);
+  background: var(--pulse-accent-soft);
+}
+
+@keyframes pulse-install-dot {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #pulse-install-status.receiving::before {
+    animation: none;
+  }
+}

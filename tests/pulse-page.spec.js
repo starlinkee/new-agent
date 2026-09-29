@@ -175,7 +175,7 @@ test.describe("pulse plugin cards", () => {
       ctx.addCard({ name: "d", title: "D", span: "half", order: 40 });
     });
     const order = await page.locator("#pulse-grid > .pulse-card").evaluateAll((els) => els.map((e) => e.dataset.plugin));
-    expect(order).toEqual(["a", "b", "c", "d"]);
+    expect(order.filter((name) => "abcd".includes(name))).toEqual(["a", "b", "c", "d"]);
     await expect(page.locator('.pulse-card[data-plugin="a"] .pulse-card-title')).toHaveText("A");
 
     const box = (name) => page.locator(`.pulse-card[data-plugin="${name}"]`).boundingBox();
