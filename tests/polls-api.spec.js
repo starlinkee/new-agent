@@ -124,16 +124,6 @@ test.describe("polls API", () => {
     const byId = await request.put("/api/polls/deadbeef");
     expect(byId.status()).toBe(405);
   });
-
-  test("closed poll returns 409 (10 s duration)", async ({ request }) => {
-    test.setTimeout(30000);
-    const poll = await (await request.post("/api/polls", { data: newPoll({ durationSec: 10 }) })).json();
-    expect((await request.post(`/api/polls/${poll.id}/vote`, { data: { option: 0 } })).status()).toBe(200);
-    await new Promise((r) => setTimeout(r, 10500));
-    const res = await request.post(`/api/polls/${poll.id}/vote`, { data: { option: 1 } });
-    expect(res.status()).toBe(409);
-    expect(await res.json()).toEqual({ error: "poll closed" });
-  });
 });
 
 test.describe("poll store and handler with an injected clock", () => {
@@ -186,6 +176,17 @@ test.describe("poll store and handler with an injected clock", () => {
     expect(res.status()).toBe(409);
     expect(await res.json()).toEqual({ error: "poll closed" });
     expect(events.filter((e) => e.type === "vote")).toHaveLength(2);
+  });
+
+  test("closed poll returns 409 (10 s duration)", async () => {
+    const poll = await (await api.post("/api/polls", { data: { question: "q", options: ["a", "b"], durationSec: 10 } })).json();
+    expect((await api.post(`/api/polls/${poll.id}/vote`, { data: { option: 0 } })).status()).toBe(200);
+    clock += 9999;
+    expect((await api.post(`/api/polls/${poll.id}/vote`, { data: { option: 1 } })).status()).toBe(200);
+    clock += 1;
+    const res = await api.post(`/api/polls/${poll.id}/vote`, { data: { option: 0 } });
+    expect(res.status()).toBe(409);
+    expect(await res.json()).toEqual({ error: "poll closed" });
   });
 
   test("other /api/polls paths fall through; store keeps at most 500 polls", async () => {
