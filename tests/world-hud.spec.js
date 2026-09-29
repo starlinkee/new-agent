@@ -31,9 +31,18 @@ test("speed buttons change the simulation rate", async ({ page }) => {
 
 test("HUD shows live counts", async ({ page }) => {
   await page.locator("#pause").click();
-  await expect(page.locator("#pop-count")).toHaveText("23");
-  await expect(page.locator("#max-gen")).toHaveText("0");
-  const food = await page.evaluate(() => window.__world.food.length);
+  // The world runs until the click lands, so a split or death may already have happened:
+  // compare against the paused world rather than the initial 23 creatures / generation 0.
+  const { pop, gen, food } = await page.evaluate(() => {
+    const w = window.__world;
+    return {
+      pop: w.creatures.length,
+      gen: Math.max(0, ...w.creatures.map((c) => c.generation)),
+      food: w.food.length,
+    };
+  });
+  await expect(page.locator("#pop-count")).toHaveText(String(pop));
+  await expect(page.locator("#max-gen")).toHaveText(String(gen));
   await expect(page.locator("#food-count")).toHaveText(String(food));
 });
 
