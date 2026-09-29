@@ -74,7 +74,31 @@ test("own kill and own death are marked", async ({ page }) => {
   await expect(items(page).nth(0)).toHaveText("Hunter ate me (60)");
 });
 
-test("only humans joining are announced", async ({ page }) => {
+test("own death is marked even when no frame was drawn since joining", async ({ page }) => {
+  // Stream events reach plugins at once, onState only on the next frame: with no frames at all the
+  // plugin must still learn its id from the kill event before the death event arrives.
+  await page.addInitScript(() => {
+    window.requestAnimationFrame = () => 1;
+  });
+  const me = view("abcd5678", "me", 60);
+  const prey = view("bbbb0002", "Prey", 20);
+  const hunter = view("cccc0003", "Hunter", 200);
+  let joined = false;
+  await page.route("**/api/blobs/join", (route) => {
+    joined = true;
+    return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(me) });
+  });
+  await mockStream(page, [me, prey, hunter], [eaten(me, prey), eaten(hunter, me)], () => joined);
+  await page.goto("/blobs");
+  await page.waitForFunction(() => window.__blobs?.state);
+  await page.fill("#blobs-name", "me");
+  await page.click("#blobs-play");
+  await expect(items(page)).toHaveCount(2);
+  await expect(items(page).nth(1)).toHaveClass("mine-kill");
+  await expect(items(page).nth(0)).toHaveClass("mine-death");
+});
+
+test("only humans joining are announced",async ({ page }) => {
   const events = [
     { type: "joined", player: view("bbbb0001", "Botty", 20, true), at: at() },
     { type: "joined", player: view("cccc0002", "Human", 20, false), at: at() },

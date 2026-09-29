@@ -16,11 +16,14 @@ export function mount(ctx) {
   ctx.hud.appendChild(tool);
 
   const timers = new Set();
-  // getMe() is already null when the death event arrives, so remember the last id seen
+  // getMe() is already null when the death event arrives, so remember the last id seen. Events are
+  // delivered right away while onState waits for the next frame, so check on both.
   let myId = null;
-  const stopState = ctx.onState(() => {
+  const rememberMe = () => {
     myId = ctx.getMe()?.id ?? myId;
-  });
+    return myId;
+  };
+  const stopState = ctx.onState(rememberMe);
 
   const add = (text, className) => {
     const li = document.createElement("li");
@@ -36,7 +39,7 @@ export function mount(ctx) {
   };
 
   const stopEvents = ctx.onEvent((event) => {
-    const me = ctx.getMe()?.id ?? myId;
+    const me = rememberMe();
     if (event.type === "eaten") {
       const { eater, victim } = event;
       const className = eater.id === me ? "mine-kill" : victim.id === me ? "mine-death" : "";
