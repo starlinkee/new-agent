@@ -446,6 +446,8 @@ def reconcile(dry):
                 # The rework worker never started (or was parked by Contrabass): Opus does it.
                 if info["mergeable"] == "CONFLICTING" or info["verdict"] == "REJECTED":
                     call_doctor(issue, info, states, memory, dry)
+                else:  # pushed and not rejected for this head: In Review, jury, auto-merge
+                    handle_open_pr(issue, info, states, memory, dry)
                 continue
             handle_open_pr(issue, info, states, memory, dry)
         elif cur in ("Done", "In Progress"):  # none / closed; Contrabass's own Done, or a dropped run
