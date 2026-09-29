@@ -3,6 +3,7 @@ import { handleTodos } from "./todos.js";
 import { renderTodosPage } from "./todos-page.js";
 import { renderWorldPage } from "./world-page.js";
 import { renderPixelsPage } from "./pixels-page.js";
+import { renderPollsPage } from "./polls-page.js";
 import { layout } from "./layout.js";
 import { handleRequest } from "./site.js";
 import { handleHealth } from "./health.js";
@@ -31,7 +32,7 @@ http
       if (await handlePixelsHistory(req, res)) return;
       if (await handlePixels(req, res)) return;
       if (await handlePolls(req, res)) return;
-      await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage });
+      await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage, "/polls": renderPollsPage });
     } catch {
       if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "internal error" }));
