@@ -185,6 +185,13 @@ def pr_info(branch):
         return {"status": "closed" if prs else "none"}
     num = opened[0]["number"]
     pr = api(f"repos/{{repo}}/pulls/{num}")
+    # GitHub computes mergeability lazily: null until something asks and the test merge
+    # finishes. Ask again a few times; a still-unknown PR is simply looked at next round.
+    for _ in range(3):
+        if pr["mergeable"] is not None:
+            break
+        time.sleep(3)
+        pr = api(f"repos/{{repo}}/pulls/{num}")
     commits = api(f"repos/{{repo}}/pulls/{num}/commits?per_page=100")
     head_at = max((c["commit"]["committer"]["date"] for c in commits), default="")
     verdict = None
