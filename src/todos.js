@@ -79,7 +79,7 @@ function parseQueryInt(value, name, min, max, fallback) {
   return Number(value);
 }
 
-function send(res, status, body, headers = {}) {
+export function send(res, status, body, headers = {}) {
   const base = { "x-content-type-options": "nosniff", ...headers };
   if (body === undefined) {
     res.writeHead(status, base);
@@ -90,7 +90,7 @@ function send(res, status, body, headers = {}) {
   res.end(JSON.stringify(body));
 }
 
-function readJson(req) {
+export function readJson(req) {
   const type = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
   if (type !== "application/json") {
     return Promise.reject(new HttpError(415, "content-type must be application/json"));
