@@ -18,14 +18,19 @@ Every ticket in the `new-agent` Linear project is picked up by an autonomous AI 
 
 ## Backlog
 
-Backlog holds three kinds of tickets:
+Backlog holds four kinds of tickets:
 
 - ideas nobody queued (no blockers): never started automatically;
 - tickets waiting for blockers: promoted automatically;
-- tickets parked for a person, with a comment from the reconciler saying why (redo limit, Merge Doctor limit, the jury giving no verdict, or a PR labeled `needs-human`). These are never promoted automatically. Resolve the problem, remove `needs-human` from the PR if it is there, and move the ticket to Todo; it starts with a fresh retry budget.
+- tickets parked for a person: labeled `needs-human` in Linear, with a reconciler comment saying why (redo limit, Merge Doctor limit, the jury giving no verdict, or a PR labeled `needs-human`), links to the PR and its last jury / Merge Doctor runs, the attempt history, and for a ticket without a PR its Contrabass events. These are never promoted automatically. Two ways out:
+  - **Fixed it** (the PR, the ticket or master): move the ticket to Todo. The jury and Merge Doctor retry the same PR with a fresh budget.
+  - **Start over**: close the PR, then move the ticket to Todo. A new worker implements it from scratch.
+
+  Moving the ticket to Todo is the decision: the reconciler removes `needs-human` from the ticket and the PR and resets the retry budgets. Removing only the label turns it into an ordinary Backlog ticket.
+- follow-ups filed by the reconciler after a merge: "Follow-up to NEW-N: jury remarks on PR #M" holds the jury's non-blocking remarks. It starts only when a person moves it to Todo.
 
 ## After the PR
 
-- **AI jury** (`ai-jury.yml`): runs the whole suite on the PR merged with master, without secrets, then Opus reviews the diff against the ticket. The verdict comment names the head commit it reviewed and counts for exactly that commit.
-- **Reconciler**: merges an approved head (only that commit), sends rejections and conflicts to the **Merge Doctor** (`merge-doctor.yml`, Opus, same branch), and parks the ticket if the doctor gives up.
+- **AI jury** (`ai-jury.yml`): runs the whole suite on the PR merged with master, without secrets, then Opus reviews the diff against the ticket. The verdict comment names the head commit it reviewed and counts for exactly that commit, and maps every acceptance item to its test. When it cannot give a verdict it says why on the PR, with a link to the run.
+- **Reconciler**: merges an approved head (only that commit), sends rejections and conflicts to the **Merge Doctor** (`merge-doctor.yml`, Opus, same branch), and parks the ticket if the doctor gives up. After a merge it files the jury's non-blocking remarks as a Backlog follow-up, and every test reported under `## Flaky tests` (in the PR description or a Merge Doctor comment) as a "Fix flaky test: tests/<file>.spec.js" ticket in Todo, or as a comment on the one already open.
 - **Master tests** (`master-tests.yml`) run after every merge. While they are red, auto-merge pauses and a "Fix failing tests on master" ticket is queued; re-run the workflow to clear a flaky failure.

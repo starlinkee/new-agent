@@ -22,6 +22,8 @@ SHA = os.environ["HEAD_SHA"]
 HEAD = os.environ["HEAD_REF"]
 BASE = os.environ["BASE_REF"]
 MAX_DIFF = 300_000
+RUN_URL = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{os.environ.get('GH_REPO', '')}"
+           f"/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}")
 
 
 def read(path):
@@ -55,6 +57,23 @@ def post(status, body):
     sys.exit(1 if status == "REJECTED" else 0)
 
 
+def no_verdict(reason, details=""):
+    """Give no verdict, but say why on the PR, so a person reading it later is not left guessing.
+
+    Not a verdict comment (no marker): the reconciler starts the jury again for this head.
+    """
+    set_status("error", "AI jury: no verdict")
+    subprocess.run(
+        ["gh", "pr", "comment", PR, "--body-file", "-"],
+        input=(f"**AI jury: no verdict** for head `{SHA[:7]}`: {reason}.\n\n"
+               + (f"{fenced(details[-3000:])}\n\n" if details.strip() else "")
+               + f"Run: {RUN_URL}\n\nThe reconciler starts the jury again, up to 3 times per head, "
+                 "then parks the ticket for a person."),
+        text=True,
+    )
+    sys.exit(1)
+
+
 def fenced(text):
     return "```text\n" + text.replace("```", "'''") + "\n```"
 
@@ -64,8 +83,8 @@ outcome = (read("tests/outcome.txt") or "").strip()
 test_log = read("tests/test_output.txt") or ""
 if outcome not in ("passed", "failed", "conflict"):
     print(f"the tests job left no outcome ({outcome!r}); no verdict", file=sys.stderr)
-    set_status("error", "AI jury: tests job broke, no verdict")
-    sys.exit(1)
+    no_verdict(f"the tests job left no result ({outcome or 'no artifact'}), so the suite's outcome "
+               "is unknown; see the `tests` job in the run")
 if outcome == "conflict":
     post("REJECTED", f"## Blocking\n\n1. The branch does not merge cleanly into `{BASE}`. "
                      f"Rebase it onto `origin/{BASE}` and resolve the conflicts.")
@@ -100,11 +119,22 @@ Reject only for BLOCKING problems:
    unbounded growth, needless O(n^2) work in hot paths.
 Style, naming, taste and optional improvements are NOT blocking.
 
+Every remark is either Blocking or Non-blocking; there is no third category such as
+"should fix". A correctness bug you would not ship is Blocking (rule 4).
+
 Answer in exactly this format:
 - Line 1: `STATUS: APPROVED` or `STATUS: REJECTED`, nothing else on the line.
+- A section `## Acceptance coverage`, always. Its first line is `PR description mapping:
+  present` or `PR description mapping: missing` (whether the PR description lists each
+  acceptance item with the test that covers it; a missing mapping alone is not blocking).
+  Then one line per acceptance item of the ticket: the item, then the test in the diff that
+  checks it (file and test title), or `no test`. An item with user-visible behavior and
+  `no test` is Blocking under rule 2. Without a ticket, map the PR description's claims.
 - If rejected: a section `## Blocking` with numbered findings, each with file:line,
   the problem, and the fix you expect. Another agent fixes exactly these.
-- Optionally: a section `## Non-blocking` with short suggestions. They never cause a rejection.
+- Optionally: a section `## Non-blocking` with short suggestions. They never cause a
+  rejection. After the merge they become a follow-up ticket for another agent, so make
+  each one self-contained: file:line, the problem, the suggested fix.
 """
 
 ticket = ticket_text(HEAD)
@@ -126,15 +156,17 @@ def status_of(answer):
     return m and m.group(1)
 
 
+failures = []
 for attempt in range(2):
     try:
         answer = ask_claude(system_prompt, prompt)
     except RuntimeError as e:
         print(e, file=sys.stderr)
+        failures.append(f"attempt {attempt + 1}: the Claude call failed:\n{str(e)[-1200:]}")
         continue
     status = status_of(answer)
     if status:
         post(status, answer.split("\n", 1)[1] if "\n" in answer else "")
     print(f"unparseable verdict (attempt {attempt + 1}):\n{answer[:1000]}", file=sys.stderr)
-set_status("error", "AI jury: no verdict")
-sys.exit(1)
+    failures.append(f"attempt {attempt + 1}: the answer did not start with a STATUS line; it began:\n{answer[:1200]}")
+no_verdict("both review attempts failed", "\n\n".join(failures))

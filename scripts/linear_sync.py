@@ -14,7 +14,9 @@ named in .contrabass/WORKFLOW.md (Done tickets only while updated in the last DO
         starts the AI Merge Doctor (Opus rebases, fixes the jury's findings, tests, pushes,
         starts the jury on the new head). At most MAX_DOCTOR attempts, then Backlog.
     verdict APPROVED, PR mergeable, no doctor pending -> squash-merge exactly the reviewed
-        commit, ticket Done (AUTO_MERGE=0 disables)
+        commit, ticket Done (AUTO_MERGE=0 disables). Then follow-ups: the jury's non-blocking
+        remarks become one Backlog ticket, and every spec reported under "## Flaky tests" (PR
+        description, Merge Doctor notes) a Todo ticket, or a comment on the one already open.
     no verdict for the current head -> wait; when none comes, start the jury again
         (workflow_dispatch), at most MAX_JURY times per head, then Backlog
     PR labeled `needs-human` (the doctor gave up) -> Backlog
@@ -38,6 +40,8 @@ Progress); they then go through the same PR rules as above.
 
 Every move to Backlog leaves a Linear comment saying why. Tickets parked for a human are
 never promoted automatically; moving one back to Todo by hand gives it a fresh retry budget.
+A park comment carries what the person needs to start: the PR, the last jury and Merge
+Doctor runs, the attempt history, and for a ticket without a PR the worker's Contrabass events.
 
 "In Review" is created on demand with type "completed": Contrabass maps the
 Linear state type to its own state ("started" would be re-run as an orphan,
@@ -49,6 +53,7 @@ Env:   LINEAR_API_KEY (required), GH_REPO (default starlinkee/new-agent),
 """
 import argparse
 import datetime as dt
+import glob
 import json
 import os
 import re
@@ -74,6 +79,14 @@ NEEDS_DOCTOR = "needs-expert-review"  # label: a doctor run is pending or runnin
 NEEDS_HUMAN = "needs-human"  # label: the doctor gave up on the PR
 # The jury's verdict marker, see .github/scripts/verdict.py; keep the two in sync.
 VERDICT_RE = re.compile(r"<!-- ai-jury verdict=(APPROVED|REJECTED) sha=([0-9a-f]{40}) -->")
+DOCTOR_HEADER = "**AI Merge Doctor (Opus)**"  # first line of every doctor comment (run_merge_doctor.py)
+# Lines of a "## Flaky tests" section, as WORKFLOW.md and the doctor prompt ask for them:
+#   - tests/<file>.spec.js: "<test title>": <what happened>
+FLAKY_RE = re.compile(r"^\s*[-*]\s*`?(tests/[\w./-]+\.spec\.js)`?\s*:?\s*(.*)$", re.M)
+# Contrabass's per-run logs (in the repo it runs from) and the event lines worth showing a person.
+CB_LOGS = os.path.join(REPO_DIR, "contrabass-*.log")
+CB_NOISE = ("agent_event=session.status", "agent_event=item/", "agent_event=turn/started",
+            "event=dispatch_skipped")
 CB_URL = os.environ.get("CB_URL", "http://localhost:8080")
 AUTO_MERGE = os.environ.get("AUTO_MERGE", "1") != "0"
 STATE_FILE = os.path.expanduser("~/.cb-linear-sync.json")
@@ -114,7 +127,8 @@ def gql(query, variables=None):
     return data["data"]
 
 
-ISSUE_FIELDS = """id identifier title state{name} updatedAt
+HUMAN_LABEL = {}  # team id -> id of its `needs-human` Linear label
+ISSUE_FIELDS = """id identifier title state{name} updatedAt team{id} project{id} labels{nodes{name}}
     inverseRelations{nodes{type issue{identifier state{name type}}}}"""
 
 
@@ -261,17 +275,23 @@ def pr_info(branch):
     head = pr["head"]["sha"]
     commits = api(f"repos/{{repo}}/pulls/{num}/commits?per_page=100")
     head_at = max((c["commit"]["committer"]["date"] for c in commits), default="")
-    verdict = None
+    verdict, verdict_body, doctor_notes = None, "", []
     for c in api(f"repos/{{repo}}/issues/{num}/comments?per_page=100"):
-        m = VERDICT_RE.search(c["body"] or "")
+        body = c["body"] or ""
+        if not c["user"]["login"].startswith("github-actions"):
+            continue
+        m = VERDICT_RE.search(body)
         # Only the jury workflow counts, and only a verdict on exactly this head commit.
-        if m and c["user"]["login"].startswith("github-actions") and m.group(2) == head:
-            verdict = m.group(1)
+        if m and m.group(2) == head:
+            verdict, verdict_body = m.group(1), body
+        elif body.startswith(DOCTOR_HEADER):
+            doctor_notes.append(body)
     mergeable = {True: "MERGEABLE", False: "CONFLICTING"}.get(pr["mergeable"])
     if mergeable is None:  # GitHub still has not decided (can take hours): ask git itself
         mergeable = local_mergeable(pr["base"]["ref"], branch)
     return {"status": "open", "number": num, "mergeable": mergeable, "head": head,
             "head_at": head_at, "branch": branch, "base": pr["base"]["ref"], "verdict": verdict,
+            "verdict_body": verdict_body, "body": pr["body"] or "", "doctor_notes": doctor_notes,
             "labels": {label["name"] for label in pr["labels"]}}
 
 
@@ -288,9 +308,11 @@ def local_mergeable(base, branch):
     return {0: "MERGEABLE", 1: "CONFLICTING"}.get(out.returncode, "UNKNOWN")
 
 
-def set_state(issue, name, states, dry, why):
+def set_state(issue, name, states, dry, why, details=""):
     log(f"{issue['identifier']}: {issue['state']['name']} -> {name} ({why})")
     if dry:
+        if details:
+            log(f"{issue['identifier']}: comment details:\n{details}")
         return
     gql(
         """mutation($i:String!,$s:String!){issueUpdate(id:$i,input:{stateId:$s}){success}}""",
@@ -298,10 +320,15 @@ def set_state(issue, name, states, dry, why):
     )
     if name == "Backlog":  # say why a ticket stopped moving
         try:
-            gql("""mutation($i:String!,$b:String!){commentCreate(input:{issueId:$i,body:$b}){success}}""",
-                {"i": issue["id"], "b": f"Moved to Backlog by the reconciler: {why}."})
+            linear_comment(issue["id"], f"Moved to Backlog by the reconciler: {why}."
+                           + (f"\n\n{details}" if details else ""))
         except Exception as e:
             log(f"{issue['identifier']}: could not comment: {e}")
+
+
+def linear_comment(issue_id, body):
+    gql("""mutation($i:String!,$b:String!){commentCreate(input:{issueId:$i,body:$b}){success}}""",
+        {"i": issue_id, "b": body})
 
 
 def forget(ident, memory):
@@ -309,20 +336,217 @@ def forget(ident, memory):
         memory.pop(k, None)
 
 
-def park(issue, states, memory, dry, why):
-    """Backlog for a person. Never promoted automatically; see unpark."""
-    set_state(issue, "Backlog", states, dry, f"{why} - needs a human. Move the ticket back to Todo "
-              "when it can continue; it then starts with a fresh retry budget")
+def recent_runs(workflow, title, n=3):
+    """The newest runs of `workflow` with this run-name (url, status, conclusion, createdAt)."""
+    runs = json.loads(gh("run", "list", "--repo", REPO, "--workflow", workflow, "--limit", "50",
+                         "--json", "displayTitle,status,conclusion,createdAt,url") or "[]")
+    return [r for r in runs if r["displayTitle"] == title][:n]
+
+
+def cb_events(issue_id, n=25):
+    """The ticket's last Contrabass events (dispatches, finishes, errors), oldest first.
+
+    Contrabass logs no agent output, only events keyed by the Linear issue id, and it deletes
+    the workspace after a run, so these lines are all that is left of a run without a PR.
+    """
+    lines = []
+    for path in sorted(glob.glob(CB_LOGS), key=os.path.getmtime):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                lines += [l.rstrip().replace(f"issue_id={issue_id} ", "") for l in f
+                          if issue_id in l and not any(x in l for x in CB_NOISE)]
+        except OSError:
+            continue
+    return "\n".join(lines[-n:])
+
+
+def park_details(issue, info, memory):
+    """What a person needs to pick a parked ticket up: links, attempt history, worker events."""
+    ident = issue["identifier"]
+    prs = branch_prs("symphony/" + ident.lower())  # newest first
+    out = []
+    if prs:
+        out.append("**Pull requests:** " + ", ".join(
+            f"[#{p['number']}]({p['html_url']}) ({'merged' if p.get('merged_at') else p['state']})"
+            for p in prs))
+        num = prs[0]["number"]
+        for name, workflow, title in (("AI jury", "ai-jury.yml", f"AI Jury PR #{num}"),
+                                      ("Merge Doctor", "merge-doctor.yml", f"Merge Doctor PR #{num}")):
+            runs = recent_runs(workflow, title)
+            out.append(f"**Last {name} runs on #{num}:** " + (", ".join(
+                f"[{r['conclusion'] or r['status']} {r['createdAt'][:16].replace('T', ' ')}]({r['url']})"
+                for r in runs) or "none"))
+    history = []
+    if info.get("head"):
+        history.append(f"current head `{info['head'][:7]}`, jury verdict on it: {info['verdict'] or 'none'}")
+    doctor, jury = memory.get("doctor:" + ident), memory.get("jury:" + ident)
+    if doctor:
+        history.append(f"Merge Doctor runs started: {doctor['n']}")
+    if isinstance(jury, dict):
+        history.append(f"jury re-runs without a verdict on `{jury['head'][:7]}`: {jury['n']}")
+    if memory.get(ident):
+        history.append(f"redos (new worker runs): {memory[ident]}")
+    if history:
+        out.append("**Attempts:** " + "; ".join(history) + ".")
+    if info.get("status") != "open":
+        events = cb_events(issue["id"])
+        out.append("**Worker runs (Contrabass events, oldest first):**\n\n```text\n" + events + "\n```"
+                   if events else "No Contrabass events for this ticket on the machine running the reconciler.")
+    if any(p["state"] == "open" for p in prs):
+        out.append("**What to do next**\n\n"
+                   "- **Fixed it** (the PR, the ticket or master) → move the ticket to Todo. The jury and "
+                   "the Merge Doctor retry the same PR with a fresh budget.\n"
+                   "- **Start over** → close the PR, then move the ticket to Todo. A new worker "
+                   "implements the ticket from scratch.")
+    else:
+        out.append("**What to do next:** improve the ticket if it was the problem, then move it to Todo. "
+                   "A new worker implements it from scratch with a fresh budget.")
+    out.append(f"Moving the ticket to Todo is the decision: the reconciler then removes the `{NEEDS_HUMAN}` "
+               "label (here and on the PR) and resets the retry budgets. Removing only the label "
+               "makes it an ordinary Backlog ticket again.")
+    return "\n\n".join(out)
+
+
+def park(issue, states, memory, dry, why, info):
+    """Backlog for a person, with everything they need. Never promoted automatically; see unpark."""
+    try:
+        details = park_details(issue, info, memory)
+    except RateLimited:
+        raise
+    except Exception as e:  # park anyway: a thin comment beats a ticket that keeps retrying
+        log(f"{issue['identifier']}: could not collect park details: {e}")
+        details = ""
+    set_state(issue, "Backlog", states, dry, f"{why} - needs a human", details)
     parked = memory.setdefault("parked", [])
     if issue["identifier"] not in parked:
         parked.append(issue["identifier"])
+    if not dry:
+        try:
+            gql("""mutation($i:String!,$l:String!){issueAddLabel(id:$i,labelId:$l){success}}""",
+                {"i": issue["id"], "l": human_label(issue["team"]["id"])})
+        except Exception as e:  # the local list still keeps it parked on this machine
+            log(f"{issue['identifier']}: could not add the {NEEDS_HUMAN} label: {e}")
 
 
-def unpark(ident, memory):
-    """A person moved a parked ticket back out of Backlog: reset its retry budgets."""
-    memory["parked"].remove(ident)
+def section(text, name):
+    """The body of the markdown section `## <name>` (or `# <name>`), "" if there is none."""
+    m = re.search(rf"^#{{1,2}}\s+{re.escape(name)}\s*$(.*?)(?=^#{{1,2}}\s|\Z)", text or "", re.M | re.S | re.I)
+    return m.group(1).strip() if m else ""
+
+
+def flaky_reports(texts):
+    """{spec file: [what was seen, ...]} from the `## Flaky tests` sections of these texts."""
+    out = {}
+    for text in texts:
+        for spec, what in FLAKY_RE.findall(section(text, "Flaky tests")):
+            out.setdefault(spec, []).append(what.strip() or "(no details)")
+    return out
+
+
+def create_ticket(source, states, dry, title, desc, todo=False, priority=0):
+    """A ticket in the source ticket's team and project, related to it.
+
+    Created in Backlog and moved to Todo only after the relation exists, so a worker never
+    picks up a half-made ticket.
+    """
+    log(f"{source['identifier']}: creating '{title}' in {'Todo' if todo else 'Backlog'}")
+    if dry:
+        return
+    new = gql(
+        """mutation($i:IssueCreateInput!){issueCreate(input:$i){issue{id identifier}}}""",
+        {"i": {"teamId": source["team"]["id"], "projectId": source["project"]["id"],
+               "stateId": states["Backlog"], "priority": priority, "title": title, "description": desc}},
+    )["issueCreate"]["issue"]
+    gql("""mutation($a:String!,$b:String!){issueRelationCreate(input:{issueId:$a,relatedIssueId:$b,type:related}){success}}""",
+        {"a": new["id"], "b": source["id"]})
+    if todo:
+        gql("""mutation($i:String!,$s:String!){issueUpdate(id:$i,input:{stateId:$s}){success}}""",
+            {"i": new["id"], "s": states["Todo"]})
+    log(f"{source['identifier']}: created {new['identifier']}")
+
+
+def file_followups(issue, info, states, dry):
+    """After a merge, keep what the pipeline noticed but did not act on.
+
+    The jury's non-blocking remarks become one Backlog ticket (a person decides whether it
+    runs). Every spec reported flaky becomes a Todo ticket, or a comment on the one still open.
+    """
+    ident, num = issue["identifier"], info["number"]
+    link = f"https://github.com/{REPO}/pull/{num}"
+    remarks = re.sub(r"_Reviewed head `[0-9a-f]+`\._", "", section(info["verdict_body"], "Non-blocking")).strip()
+    if remarks:
+        title = f"Follow-up to {ident}: jury remarks on PR #{num}"
+        if not issues({"title": {"eq": title}}):
+            create_ticket(issue, states, dry, title, (
+                f"**Goal.** Address the AI jury's non-blocking remarks on {link} ({ident}), which "
+                "merged without them.\n\n**Scope**\n\n* Judge each remark on its merits: fix it (with a "
+                "test when behavior changes) or decline it and say why in the PR description. "
+                "Stay within the code the remarks name.\n\n"
+                f"**Remarks**\n\n{remarks}\n\n"
+                "**Acceptance:** every remark above is fixed or explicitly declined in the PR "
+                "description; `npm run test:ai` passes.\n\n---\n\n"
+                "Created by the reconciler. It stays in Backlog until a person moves it to Todo."))
+    for spec, seen in flaky_reports([info["body"], *info["doctor_notes"]]).items():
+        report = "\n".join(f"- {s}" for s in seen)
+        title = f"Fix flaky test: {spec}"
+        found = issues({"title": {"eq": title}, "state": {"type": {"neq": "canceled"}, "name": {"neq": "Done"}}})
+        if found:
+            log(f"{ident}: {spec} reported flaky again, commenting on {found[0]['identifier']}")
+            if not dry:
+                linear_comment(found[0]["id"], f"Reported flaky again in {link} ({ident}):\n\n{report}")
+            continue
+        create_ticket(issue, states, dry, title, (
+            f"**Goal.** `{spec}` fails intermittently. Make it deterministic.\n\n"
+            f"**Reports**\n\nFrom {link} ({ident}):\n\n{report}\n\n"
+            "**Scope**\n\n* Find why the test depends on timing, randomness or shared state (the live "
+            "simulation on /world is a usual suspect) and fix the test or the code under test. Never "
+            "skip or delete it, add retries, or loosen what it checks.\n\n"
+            f"**Acceptance:** `npx playwright test {spec} --repeat-each=20 --workers=1` passes, and "
+            "`npm run test:ai` passes.\n\n---\n\nCreated by the reconciler from a flaky-test report."),
+            todo=True, priority=2)
+
+
+def is_parked(issue, memory):
+    """Parked for a person: the Linear label is the record; the local list covers older parks."""
+    return (NEEDS_HUMAN in {label["name"] for label in issue["labels"]["nodes"]}
+            or issue["identifier"] in memory.get("parked", []))
+
+
+def human_label(team_id):
+    """Id of the team's `needs-human` Linear label, created on first use."""
+    if team_id not in HUMAN_LABEL:
+        nodes = gql("""query($n:String!){issueLabels(filter:{name:{eq:$n}}){nodes{id team{id}}}}""",
+                    {"n": NEEDS_HUMAN})["issueLabels"]["nodes"]
+        found = next((n["id"] for n in nodes if not n["team"] or n["team"]["id"] == team_id), None)
+        if not found:
+            found = gql(
+                """mutation($t:String!,$n:String!){issueLabelCreate(input:{teamId:$t,name:$n,color:"#B60205",
+                description:"Parked by the reconciler: the AI pipeline gave up, a person decides"})
+                {issueLabel{id}}}""", {"t": team_id, "n": NEEDS_HUMAN})["issueLabelCreate"]["issueLabel"]["id"]
+        HUMAN_LABEL[team_id] = found
+    return HUMAN_LABEL[team_id]
+
+
+def unpark(issue, memory, dry):
+    """A person moved a parked ticket to Todo: that is the decision to continue.
+
+    Reset its retry budgets and drop `needs-human` from the ticket and its open PR, so the
+    pipeline does not park it again straight away.
+    """
+    ident = issue["identifier"]
+    if ident in memory.get("parked", []):
+        memory["parked"].remove(ident)
     forget(ident, memory)
-    log(f"{ident}: back from Backlog by hand, retry budgets reset")
+    log(f"{ident}: moved out of Backlog by a person, retry budgets reset, {NEEDS_HUMAN} removed")
+    if dry:
+        return
+    if any(label["name"] == NEEDS_HUMAN for label in issue["labels"]["nodes"]):
+        gql("""mutation($i:String!,$l:String!){issueRemoveLabel(id:$i,labelId:$l){success}}""",
+            {"i": issue["id"], "l": human_label(issue["team"]["id"])})
+    for p in branch_prs("symphony/" + ident.lower()):
+        if p["state"] == "open" and any(label["name"] == NEEDS_HUMAN for label in p["labels"]):
+            gh("issue", "edit", str(p["number"]), "--repo", REPO, "--remove-label", NEEDS_HUMAN)
+    ROUND.pop("symphony/" + ident.lower(), None)  # labels changed; look the PR up again
 
 
 def wait_for_blockers(issue, waiting, states, dry):
@@ -361,7 +585,7 @@ def retrigger_jury(issue, info, states, memory, dry):
         return
     if rec["n"] >= MAX_JURY:
         park(issue, states, memory, dry,
-             f"PR #{num}: the AI jury gave no verdict for head {head[:7]} in {rec['n']} runs (see the ai-jury logs)")
+             f"PR #{num}: the AI jury gave no verdict for head {head[:7]} in {rec['n']} runs (see the ai-jury runs)", info)
         return
     log(f"{ident}: no jury verdict for head {head[:7]}, starting the jury on PR #{num} (run {rec['n'] + 1})")
     memory[key] = {"head": head, "n": rec["n"] + 1, "at": time.time()}
@@ -387,7 +611,7 @@ def call_doctor(issue, info, states, memory, dry):
     if since < DOCTOR_MAX_MIN * 60 and workflow_running("merge-doctor.yml", f"Merge Doctor PR #{num}"):
         return
     if rec["n"] >= MAX_DOCTOR:
-        park(issue, states, memory, dry, f"PR #{num}: conflicts/jury rejection, Merge Doctor failed {rec['n']} times")
+        park(issue, states, memory, dry, f"PR #{num}: conflicts/jury rejection, Merge Doctor failed {rec['n']} times", info)
         return
     log(f"{ident}: PR #{num} needs the Merge Doctor (attempt {rec['n'] + 1})")
     memory[key] = {"n": rec["n"] + 1, "at": time.time()}
@@ -410,8 +634,8 @@ def handle_open_pr(issue, info, states, memory, dry, fix):
     """
     ident, num, cur = issue["identifier"], info["number"], issue["state"]["name"]
     if NEEDS_HUMAN in info["labels"]:
-        park(issue, states, memory, dry, f"PR #{num} is labeled {NEEDS_HUMAN} (the Merge Doctor gave up; "
-             f"see its last comment). Fix the PR or merge it by hand, and remove the label")
+        park(issue, states, memory, dry, f"PR #{num} is labeled {NEEDS_HUMAN}: the Merge Doctor gave up "
+             "(see its last comment on the PR). You can also merge the PR by hand", info)
         return
     held = fix is not None and ident != fix  # master is red: nothing else merges or gets doctored
     if (info["verdict"] == "REJECTED" or info["mergeable"] == "CONFLICTING") and not held:
@@ -426,6 +650,12 @@ def handle_open_pr(issue, info, states, memory, dry, fix):
                "--match-head-commit", info["head"])
         set_state(issue, "Done", states, dry, f"PR #{num} merged")
         forget(ident, memory)
+        try:
+            file_followups(issue, info, states, dry)
+        except RateLimited:
+            raise
+        except Exception as e:  # the merge stands; only the follow-ups are lost
+            log(f"{ident}: could not file follow-up tickets: {e}")
         return
     if cur != "In Review":
         set_state(issue, "In Review", states, dry,
@@ -490,8 +720,8 @@ def master_health(team_id, states, memory, dry):
 def reconcile_issue(issue, states, memory, dry, activity, open_branches, fix):
     ident, cur = issue["identifier"], issue["state"]["name"]
     branch = "symphony/" + ident.lower()
-    if cur in ("Todo", "In Progress") and ident in memory.get("parked", []):
-        unpark(ident, memory)
+    if cur in ("Todo", "In Progress") and is_parked(issue, memory):
+        unpark(issue, memory, dry)
     if cur in ("Todo", "In Progress") and branch not in open_branches:
         waiting = unmerged_blockers(issue)
         if waiting:
@@ -523,7 +753,7 @@ def reconcile_issue(issue, states, memory, dry, activity, open_branches, fix):
             return wait_for_blockers(issue, waiting, states, dry)
         n = memory.get(ident, 0)
         if n >= MAX_REDO:
-            park(issue, states, memory, dry, f"no merged/open PR after {n} redos")
+            park(issue, states, memory, dry, f"no merged/open PR after {n} redos", info)
         else:
             set_state(issue, "Todo", states, dry, f"no PR ({pr}); redo #{n + 1}")
             memory[ident] = n + 1
@@ -534,7 +764,7 @@ def promote_unblocked(states, memory, dry):
     global LOOKUP_FAILS
     for issue in issues({"state": {"name": {"eq": "Backlog"}}}):
         ident = issue["identifier"]
-        if ident in memory.get("parked", []):
+        if is_parked(issue, memory):
             continue
         blockers = [r for r in issue["inverseRelations"]["nodes"] if r["type"] == "blocks"]
         if not blockers:

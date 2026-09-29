@@ -27,6 +27,8 @@ BASE = os.environ["BASE_REF"]
 HEAD = os.environ["HEAD_REF"]
 REPO = os.environ["GITHUB_REPOSITORY"]
 TOKEN = os.environ["GH_TOKEN"]
+RUN_URL = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{REPO}"
+           f"/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}")
 
 
 def run(*cmd, check=True, env=None):
@@ -34,12 +36,29 @@ def run(*cmd, check=True, env=None):
 
 
 def comment(body):
+    # The header is how the reconciler finds these comments (DOCTOR_HEADER in linear_sync.py).
     subprocess.run(["gh", "pr", "comment", PR, "--body-file", "-"],
-                   input=f"**AI Merge Doctor (Opus)**\n\n{body}", text=True, check=True)
+                   input=f"**AI Merge Doctor (Opus)**\n\n{body}\n\n_Run: {RUN_URL}_", text=True, check=True)
 
 
 def tail(text, n=6000):
     return text[-n:]
+
+
+def crashed(kind, value, tb):
+    """An unexpected error (a failed git or gh call, say) still leaves a note on the PR."""
+    sys.__excepthook__(kind, value, tb)
+    detail = f"{kind.__name__}: {value}"
+    if isinstance(value, subprocess.CalledProcessError):
+        detail += "\n" + tail(value.stderr or "", 1500)
+    try:
+        comment("The doctor script crashed; nothing was pushed. The reconciler will retry.\n\n"
+                f"```text\n{detail.replace(TOKEN, '***')}\n```")
+    except Exception:
+        pass
+
+
+sys.excepthook = crashed
 
 
 # Commit as the PR's author (a real GitHub account, via its noreply address). An unlinked
@@ -99,8 +118,12 @@ Rules:
 - Never run `git push`, never rewrite {BASE}, never use `git merge`.
 - If you are convinced a blocking finding is wrong, do not change code for it; explain
   why in your summary. A person then decides.
+- A test that failed once and passed on a re-run with nothing changed in between is flaky.
+  Do not fix it here (out of scope).
 - Finish with a short plain-text summary: what conflicted, how you resolved it,
-  and the final test result.
+  and the final test result. If you saw a flaky test, end with a section `## Flaky tests`,
+  one line per test: `- tests/<file>.spec.js: "<test title>": <what you saw>`. A ticket
+  to fix it is filed from these lines, so give the failure message.
 """
 state = (
     f"The rebase onto origin/{BASE} STOPPED WITH CONFLICTS and is still in progress. "
@@ -120,7 +143,7 @@ try:
          "Read", "Edit", "Write", "Glob", "Grep"],
     )
 except SystemExit:
-    comment("The Opus run itself failed (see the workflow log). Nothing was pushed.")
+    comment("The Opus run itself failed (see the run log below). Nothing was pushed.")
     raise
 
 # Do not trust the agent: verify the result independently before pushing.

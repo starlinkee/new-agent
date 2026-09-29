@@ -1,5 +1,5 @@
 name: AI Adversarial Jury
-run-name: AI Jury PR #${{ github.event.pull_request.number || inputs.pr }}
+run-name: "AI Jury PR #${{ github.event.pull_request.number || inputs.pr }}"
 # pull_request_target: this workflow and the jury script always come from the base branch,
 # so a PR can never change the gate that reviews it. PR code only runs in the `tests` job,
 # which has no secrets and a read-only token; the jury job reads the code but never runs it.

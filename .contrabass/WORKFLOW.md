@@ -74,12 +74,40 @@ custom roles on top of it.
 - If tests you did not touch also fail on a clean `origin/master`, master
   itself is broken: do not fix that here (a separate ticket does). Say so in
   the PR description.
+- A test you did not touch that fails once and passes on a re-run, with
+  nothing changed in between, is flaky. Do not fix it here; report it in the
+  PR description (see below).
 - What happens after the PR: CI runs the whole suite on your branch merged
   with master, and the AI jury checks the diff against this ticket's Goal,
-  Scope and Acceptance. In the PR description, list each acceptance item and
-  the test that covers it.
+  Scope and Acceptance. If the jury rejects it, another agent (the Merge
+  Doctor) fixes the PR and reads your description to learn what you did.
 - If verification fails, fix and re-run. Stop after 4 failed fix loops and
   escalate (see "If everything fails" below).
+
+## The PR description
+
+Write it for the jury and for the agent that may have to finish your work.
+Use these sections:
+
+```
+## Summary
+What the PR adds or changes, in a few sentences.
+
+## Acceptance -> tests
+- <each acceptance item of the ticket>: `tests/<file>.spec.js` "<test title>"
+
+## Notes
+Decisions a reviewer would ask about, changes to shared files and why,
+known limitations, anything left out of scope. Write "None" if there are none.
+
+## Flaky tests
+- tests/<file>.spec.js: "<test title>": <the failure message you saw>
+(Only when you saw one; a ticket to fix it is filed from these lines. Omit the
+section otherwise.)
+
+## Test result
+<the final summary line of `npm run test:ai`, e.g. "137 passed">
+```
 
 ## Merge phase: rebase before you open a PR
 
@@ -88,8 +116,7 @@ branch actually merges cleanly:
 
 1. `git fetch origin && git rebase origin/master`
 2. If the rebase is clean, run `npm run test:ai` one more time to confirm
-   nothing broke, then open the PR normally. Paste the final test summary
-   line into the PR description.
+   nothing broke, then open the PR with the description described above.
 3. If there are conflicts:
    a. Resolve them in the code (not by blindly taking
       "ours"/"theirs" - understand what both sides changed).

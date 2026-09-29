@@ -1,5 +1,5 @@
 name: AI Merge Doctor
-run-name: Merge Doctor PR #${{ github.event.pull_request.number }}
+run-name: "Merge Doctor PR #${{ github.event.pull_request.number }}"
 # pull_request_target (not pull_request): a PR with merge conflicts has no
 # merge commit, and GitHub does not run pull_request workflows for it - which
 # is exactly the case this workflow exists for. The scripts run from the base
@@ -50,6 +50,7 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
       - name: Rebase, resolve, verify, push
+        id: doctor
         working-directory: pr
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -59,6 +60,19 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: python ../_trusted/.github/scripts/run_merge_doctor.py
+      # The script comments on its own failures. This covers the rest: a setup step failed
+      # (the script never ran) or the job was cancelled or timed out while it ran.
+      - name: Report a run that ended without the doctor's own comment
+        if: ${{ !success() && steps.doctor.outcome != 'failure' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OUTCOME: ${{ steps.doctor.outcome }}
+        run: |
+          if [ "$OUTCOME" = skipped ]; then what="a setup step failed before the doctor started"
+          else what="the doctor step ended as '$OUTCOME' (cancelled or timed out)"; fi
+          printf '**AI Merge Doctor (Opus)**\n\nThis run ended early: %s. Nothing was pushed; the reconciler will retry.\n\n_Run: %s_\n' \
+            "$what" "$RUN_URL" | gh pr comment ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --body-file - || true
       # The label means "a doctor run is pending or running": the reconciler never merges
       # while it is set, and re-adds it for the next attempt.
       - name: Release the label
