@@ -1,0 +1,184 @@
+.pulse-chart-legend {
+  display: flex;
+  gap: 1rem;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  list-style: none;
+  font-size: 0.85rem;
+  color: var(--pulse-muted);
+}
+
+.pulse-chart-legend-item::before {
+  content: "";
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  margin-right: 0.4rem;
+  border-radius: 50%;
+  background: var(--pulse-series-1);
+}
+
+.pulse-chart-legend-item.visitors::before {
+  background: var(--pulse-series-2);
+}
+
+.pulse-chart-stage {
+  position: relative;
+  width: 100%;
+}
+
+.pulse-chart {
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+  touch-action: pan-y;
+}
+
+.pulse-chart:focus-visible {
+  outline: 2px solid var(--pulse-accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+.pulse-chart-grid,
+.pulse-chart-axis {
+  stroke: var(--pulse-border);
+  stroke-width: 1;
+}
+
+.pulse-chart-axis {
+  stroke: var(--pulse-muted);
+  stroke-opacity: 0.5;
+}
+
+.pulse-chart-label {
+  fill: var(--pulse-muted);
+  font-size: 11px;
+}
+
+.pulse-chart-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.pulse-chart-line.pageviews {
+  stroke: var(--pulse-series-1);
+}
+
+.pulse-chart-line.visitors {
+  stroke: var(--pulse-series-2);
+}
+
+.pulse-chart-area {
+  fill: var(--pulse-series-1);
+  fill-opacity: 0.12;
+  stroke: none;
+}
+
+.pulse-chart.animate .pulse-chart-line {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: pulse-chart-draw 0.7s ease-out forwards;
+}
+
+.pulse-chart.animate .pulse-chart-area {
+  animation: pulse-chart-fade 0.7s ease-out;
+}
+
+@keyframes pulse-chart-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes pulse-chart-fade {
+  from {
+    fill-opacity: 0;
+  }
+}
+
+.pulse-chart-guide {
+  stroke: var(--pulse-muted);
+  stroke-opacity: 0.6;
+  stroke-dasharray: 3 3;
+  pointer-events: none;
+}
+
+.pulse-chart-dot {
+  stroke: var(--pulse-surface);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.pulse-chart-dot.pageviews {
+  fill: var(--pulse-series-1);
+}
+
+.pulse-chart-dot.visitors {
+  fill: var(--pulse-series-2);
+}
+
+.pulse-chart-hit {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+.pulse-chart-tooltip {
+  position: absolute;
+  z-index: 1;
+  display: grid;
+  gap: 0.15rem;
+  min-width: 7.5rem;
+  padding: 0.5rem 0.7rem;
+  transform: translate(-50%, -100%);
+  background: var(--pulse-surface);
+  border: 1px solid var(--pulse-border);
+  border-radius: 10px;
+  box-shadow: var(--pulse-shadow);
+  font-size: 0.8rem;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.pulse-chart-tooltip[hidden] {
+  display: none;
+}
+
+.pulse-chart-tooltip .pageviews::before,
+.pulse-chart-tooltip .visitors::before {
+  content: "";
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: 0.4rem;
+  border-radius: 50%;
+  background: var(--pulse-series-1);
+}
+
+.pulse-chart-tooltip .visitors::before {
+  background: var(--pulse-series-2);
+}
+
+.pulse-chart-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  pointer-events: none;
+}
+
+.pulse-chart-empty[hidden] {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-chart.animate .pulse-chart-line,
+  .pulse-chart.animate .pulse-chart-area {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+}
