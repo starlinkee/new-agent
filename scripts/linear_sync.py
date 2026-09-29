@@ -199,9 +199,25 @@ def pr_info(branch):
         m = re.search(r"STATUS:\s*(APPROVED|REJECTED)", c["body"])  # only the jury workflow counts
         if m and c["user"]["login"].startswith("github-actions") and c["created_at"] > head_at:
             verdict = m.group(1)  # latest wins; older verdicts are for older commits
-    mergeable = {True: "MERGEABLE", False: "CONFLICTING"}.get(pr["mergeable"], "UNKNOWN")
+    mergeable = {True: "MERGEABLE", False: "CONFLICTING"}.get(pr["mergeable"])
+    if mergeable is None:  # GitHub still has not decided (can take hours): ask git itself
+        mergeable = local_mergeable(pr["base"]["ref"], branch)
     return {"status": "open", "number": num, "mergeable": mergeable,
             "head": pr["head"]["sha"], "head_at": head_at, "title": pr["title"], "branch": branch, "verdict": verdict}
+
+
+def local_mergeable(base, branch):
+    """MERGEABLE / CONFLICTING by trial-merging in this clone; UNKNOWN if git cannot tell."""
+    repo_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        subprocess.run(["git", "fetch", "-q", "origin", base, branch], cwd=repo_dir,
+                       capture_output=True, timeout=60, check=True)
+        out = subprocess.run(["git", "merge-tree", "--write-tree", f"origin/{base}", f"origin/{branch}"],
+                             cwd=repo_dir, capture_output=True, timeout=60)
+    except Exception as e:
+        log(f"{branch}: local merge check failed: {e}")
+        return "UNKNOWN"
+    return {0: "MERGEABLE", 1: "CONFLICTING"}.get(out.returncode, "UNKNOWN")
 
 
 def set_state(issue, name, states, dry, why):
