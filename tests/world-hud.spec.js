@@ -31,7 +31,7 @@ test("speed buttons change the simulation rate", async ({ page }) => {
 
 test("HUD shows live counts", async ({ page }) => {
   await page.locator("#pause").click();
-  await expect(page.locator("#pop-count")).toHaveText("20");
+  await expect(page.locator("#pop-count")).toHaveText("23");
   await expect(page.locator("#max-gen")).toHaveText("0");
   const food = await page.evaluate(() => window.__world.food.length);
   await expect(page.locator("#food-count")).toHaveText(String(food));
@@ -49,18 +49,18 @@ test("click on empty space adds food", async ({ page }) => {
 
 test("shift+click spawns a creature", async ({ page }) => {
   await page.locator("#pause").click();
-  await expect(page.locator("#pop-count")).toHaveText("20");
+  await expect(page.locator("#pop-count")).toHaveText("23");
   await page.locator("#world").click({ position: { x: 60, y: 60 }, modifiers: ["Shift"] });
-  await expect(page.locator("#pop-count")).toHaveText("21");
+  await expect(page.locator("#pop-count")).toHaveText("24");
 });
 
 test("reset restores the initial state", async ({ page }) => {
   await page.locator("#pause").click();
   await page.locator("#world").click({ position: { x: 50, y: 50 } });
   await page.locator("#world").click({ position: { x: 90, y: 90 }, modifiers: ["Shift"] });
-  await expect(page.locator("#pop-count")).toHaveText("21");
+  await expect(page.locator("#pop-count")).toHaveText("24");
   await page.locator("#reset").click();
-  await expect(page.locator("#pop-count")).toHaveText("20");
+  await expect(page.locator("#pop-count")).toHaveText("23");
   await expect(page.locator("#food-count")).toHaveText("0");
   await expect(page.locator("#elapsed")).toHaveText("0.0");
 });

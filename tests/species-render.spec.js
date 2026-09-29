@@ -15,8 +15,8 @@ test("legend lists each known species and the canvas draws both shapes", async (
       species: "predator",
     });
   });
-  await page.waitForFunction(() => window.__renderStats.drawn.predator >= 1);
+  await page.waitForFunction(() => window.__renderStats.drawn.predator >= 4);
   const drawn = await page.evaluate(() => window.__renderStats.drawn);
   expect(drawn.herbivore).toBeGreaterThan(0);
-  expect(drawn.predator).toBe(1);
+  expect(drawn.predator).toBe(4);
 });

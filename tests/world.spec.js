@@ -1,10 +1,10 @@
 import { test, expect } from "@playwright/test";
 
-test("world page shows a canvas with 20 wandering creatures", async ({ page }) => {
+test("world page shows a canvas with 20 herbivores and 3 predators wandering", async ({ page }) => {
   await page.goto("/world");
   await expect(page.locator("canvas#world")).toBeVisible();
   await page.waitForFunction(() => window.__world);
-  expect(await page.evaluate(() => window.__world.creatures.length)).toBe(20);
+  expect(await page.evaluate(() => window.__world.creatures.length)).toBe(23);
   const before = await page.evaluate(() => window.__world.creatures.map((c) => [c.x, c.y]));
   await page.waitForTimeout(500);
   const after = await page.evaluate(() => window.__world.creatures.map((c) => [c.x, c.y]));

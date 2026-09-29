@@ -6,10 +6,12 @@ import { createTicker } from "/static/ticker.js";
 import { createStats } from "/static/stats.js";
 import { drawCreature, renderLegend } from "/static/render-species.js";
 import { mountPanels } from "/static/panels/index.js";
+import { enablePredators } from "/static/predators.js";
 
 const canvas = document.getElementById("world");
 const ctx = canvas.getContext("2d");
 const world = createWorld({ width: canvas.clientWidth, height: canvas.clientHeight });
+enablePredators(world);
 const events = createEvents();
 const ticker = createTicker(document.getElementById("ticker"));
 const stats = createStats();
