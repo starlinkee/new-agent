@@ -14,6 +14,8 @@ import { handlePixelsHistory } from "./pixels-history.js";
 import { handlePolls } from "./polls.js";
 import { handlePollStream } from "./polls-stream.js";
 import { handlePollActivity } from "./polls-activity.js";
+import { handleBlobs } from "./blobs.js";
+import { handleBlobStream } from "./blobs-stream.js";
 
 export function renderPage() {
   return layout({
@@ -36,6 +38,8 @@ http
       if (await handlePollStream(req, res)) return;
       if (await handlePollActivity(req, res)) return;
       if (await handlePolls(req, res)) return;
+      if (await handleBlobStream(req, res)) return;
+      if (await handleBlobs(req, res)) return;
       await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage, "/polls": renderPollsPage });
     } catch {
       if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
