@@ -4,8 +4,9 @@
 // ctx = { root, hud, getState(), getMe(), getCamera(), onState(listener), onEvent(listener) };
 // onState listeners get every snapshot after it was drawn, onEvent listeners get { type, ...data }
 // for joined, eaten and left events; both return an unsubscribe function.
+import * as leaderboard from "./leaderboard.js";
 
-export const PLUGINS = [];
+export const PLUGINS = [leaderboard];
 
 // One failing plugin must not stop the page; returns a function that unmounts the plugins that started.
 export function mountPlugins(ctx) {
