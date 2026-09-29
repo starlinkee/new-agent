@@ -58,6 +58,7 @@ MAX_DOCTOR = 3  # Merge Doctor runs per conflicting PR before a human is asked
 DOCTOR_START_MIN = 3  # a doctor run should show up in Actions within this long after the label
 DOCTOR_MAX_MIN = 70  # safety net: workflow timeout is 60 min
 MAX_STUCK = 2  # reworks in a row that left the branch head unchanged before a human is asked
+TODO_STALE_MIN = 15  # a Todo ticket after a rework that Contrabass has not started for this long is stuck
 ORPHAN_MIN = 3  # In Progress with no Contrabass run for this long = abandoned
 JURY_WAIT_MIN = 3  # a head commit older than this with no jury run/verdict gets the jury re-triggered
 CB_URL = os.environ.get("CB_URL", "http://localhost:8080")
@@ -375,7 +376,7 @@ def reconcile(dry):
     ensure_in_review(team_id, states, dry)
     d = gql(
         """query($k:String!){issues(first:100,filter:{team:{key:{eq:$k}},
-        state:{name:{in:["Done","In Review","In Progress"]}}}){nodes{id identifier
+        state:{name:{in:["Done","In Review","In Progress","Todo"]}}}){nodes{id identifier
         state{name} updatedAt}}}""",
         {"k": TEAM_KEY},
     )
@@ -393,6 +394,15 @@ def reconcile(dry):
                     or idle < dt.timedelta(minutes=ORPHAN_MIN)):
                 continue
             log(f"{ident}: In Progress but Contrabass has no run for it")
+        elif cur == "Todo":
+            # Only tickets this reconciler sent to Todo for a rework that Contrabass then
+            # never started (it parks a run it could not verify and does not retry it).
+            idle = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(
+                issue["updatedAt"].replace("Z", "+00:00"))
+            if ("rework:" + ident not in memory or activity is None or ident in activity
+                    or idle < dt.timedelta(minutes=TODO_STALE_MIN)):
+                continue
+            log(f"{ident}: Todo for {int(idle.total_seconds() / 60)} min after a rework, Contrabass has no run for it")
         try:
             info = pr_info(branch)
         except RateLimited:
@@ -406,6 +416,10 @@ def reconcile(dry):
             if cur != "Done":
                 set_state(issue, "Done", states, dry, "PR merged")
         elif pr == "open":
+            if cur == "Todo":
+                if info["mergeable"] == "CONFLICTING":
+                    call_doctor(issue, info, states, memory, dry)
+                continue
             handle_open_pr(issue, info, states, memory, dry)
         elif cur in ("Done", "In Progress"):  # none / closed; Contrabass's own Done, or a dropped run
             age = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(
