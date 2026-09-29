@@ -112,7 +112,7 @@ test.describe("pixels handler (private server)", () => {
 
   async function start() {
     store = new PixelStore();
-    const handle = createPixelHandler(store);
+    const handle = createPixelHandler(store, { burst: 1000 });
     server = http.createServer(async (req, res) => {
       try {
         if (!(await handle(req, res))) {
