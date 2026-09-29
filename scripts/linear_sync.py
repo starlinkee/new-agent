@@ -60,6 +60,7 @@ import re
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 
 REPO = os.environ.get("GH_REPO", "starlinkee/new-agent")
@@ -120,8 +121,15 @@ def gql(query, variables=None):
         data=json.dumps({"query": query, "variables": variables or {}}).encode(),
         headers={"Authorization": KEY, "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=40) as r:
-        data = json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=40) as r:
+            data = json.load(r)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")
+        # Linear reports its hourly request limit as a 400 with code RATELIMITED.
+        if "RATELIMITED" in body:
+            raise RateLimited("Linear: " + body[:200]) from None
+        raise RuntimeError(f"Linear HTTP {e.code}: {body[:300]}") from None
     if data.get("errors"):
         raise RuntimeError(data["errors"][0]["message"])
     return data["data"]
@@ -611,7 +619,7 @@ def call_doctor(issue, info, states, memory, dry):
     if since < DOCTOR_MAX_MIN * 60 and workflow_running("merge-doctor.yml", f"Merge Doctor PR #{num}"):
         return
     if rec["n"] >= MAX_DOCTOR:
-        park(issue, states, memory, dry, f"PR #{num}: conflicts/jury rejection, Merge Doctor failed {rec['n']} times", info)
+        park(issue, states, memory, dry, f"PR #{num}: conflicts/jury rejection, Merge Doctor ran {rec['n']} times (the limit) and it still is not mergeable", info)
         return
     log(f"{ident}: PR #{num} needs the Merge Doctor (attempt {rec['n'] + 1})")
     memory[key] = {"n": rec["n"] + 1, "at": time.time()}
@@ -838,7 +846,7 @@ def main():
             reconcile(a.dry_run)
             ok = LOOKUP_FAILS == 0
         except RateLimited as e:
-            log(f"GitHub rate limit hit ({e}); sleeping {RATE_LIMIT_SLEEP}s")
+            log(f"rate limit hit ({e}); sleeping {RATE_LIMIT_SLEEP}s")
             wait = RATE_LIMIT_SLEEP
         except Exception as e:
             log(f"sync error: {e}")
