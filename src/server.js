@@ -16,6 +16,7 @@ import { handlePollStream } from "./polls-stream.js";
 import { handlePollActivity } from "./polls-activity.js";
 import { handleBlobs } from "./blobs.js";
 import { handleBlobStream } from "./blobs-stream.js";
+import { startDefaultBots } from "./blobs-bots.js";
 
 export function renderPage() {
   return layout({
@@ -25,6 +26,7 @@ export function renderPage() {
 }
 
 const port = Number(process.env.PORT || 3000);
+startDefaultBots();
 
 http
   .createServer(async (req, res) => {
