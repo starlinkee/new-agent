@@ -58,16 +58,19 @@ test("click on empty space adds food", async ({ page }) => {
 
 test("shift+click spawns a creature", async ({ page }) => {
   await page.locator("#pause").click();
-  await expect(page.locator("#pop-count")).toHaveText("23");
+  // The world runs until the pause click lands, so the population may already differ from 23.
+  const before = await page.evaluate(() => window.__world.creatures.length);
+  await expect(page.locator("#pop-count")).toHaveText(String(before));
   await page.locator("#world").click({ position: { x: 60, y: 60 }, modifiers: ["Shift"] });
-  await expect(page.locator("#pop-count")).toHaveText("24");
+  await expect(page.locator("#pop-count")).toHaveText(String(before + 1));
 });
 
 test("reset restores the initial state", async ({ page }) => {
   await page.locator("#pause").click();
+  const before = await page.evaluate(() => window.__world.creatures.length);
   await page.locator("#world").click({ position: { x: 50, y: 50 } });
   await page.locator("#world").click({ position: { x: 90, y: 90 }, modifiers: ["Shift"] });
-  await expect(page.locator("#pop-count")).toHaveText("24");
+  await expect(page.locator("#pop-count")).toHaveText(String(before + 1));
   await page.locator("#reset").click();
   await expect(page.locator("#pop-count")).toHaveText("23");
   await expect(page.locator("#food-count")).toHaveText("0");
