@@ -16,6 +16,7 @@ In Review:
         MAX_DOCTOR attempts, then Backlog. Workers only handle tickets that have no PR yet.
     verdict APPROVED, PR mergeable -> squash-merge it, ticket Done (AUTO_MERGE=0 disables)
     no verdict for the current head commit yet -> wait
+  Todo ticket that already has an open PR -> same PR rules (it is not waiting for a worker)
   no PR, ticket Done > GRACE min -> Todo (redo), at most MAX_REDO times, then Backlog
   PR closed unmerged             -> Todo (redo), same cap
 
@@ -373,16 +374,24 @@ def reconcile(dry):
     ensure_in_review(team_id, states, dry)
     d = gql(
         """query($k:String!){issues(first:100,filter:{team:{key:{eq:$k}},
-        state:{name:{in:["Done","In Review","In Progress"]}}}){nodes{id identifier
+        state:{name:{in:["Done","In Review","In Progress","Todo"]}}}){nodes{id identifier
         state{name} updatedAt}}}""",
         {"k": TEAM_KEY},
     )
     memory = load_state()
     activity = cb_activity()
+    open_branches = None  # fetched once, and only if a Todo ticket needs it
     for issue in d["issues"]["nodes"]:
         ident = issue["identifier"]
         branch = "symphony/" + ident.lower()
         cur = issue["state"]["name"]
+        if cur == "Todo":
+            # A Todo ticket normally waits for a worker. One that already has an open PR was
+            # left there by an older rework loop or a jury push; it belongs in the PR flow.
+            if open_branches is None:
+                open_branches = {p["head"]["ref"] for p in api("repos/{repo}/pulls?state=open&per_page=100")}
+            if branch not in open_branches:
+                continue
         if cur == "In Progress":
             # Only tickets Contrabass has dropped: no run, no retry queued, for a while.
             idle = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(
