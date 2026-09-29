@@ -1,0 +1,11 @@
+.poll-tool[data-plugin="share"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.poll-tool[data-plugin="share"] #poll-share-url {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
