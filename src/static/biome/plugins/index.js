@@ -2,7 +2,9 @@
 // nothing else, so parallel tickets merge without conflicts. Plugins are independent of each
 // other and their order does not matter.
 
-export const PLUGINS = [];
+import * as feeding from "./feeding.js";
+
+export const PLUGINS = [feeding];
 
 // Mounts every plugin once with the page context; a plugin that throws is skipped and the rest
 // still mount. Returns a cleanup that unmounts them all.
