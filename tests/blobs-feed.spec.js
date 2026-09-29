@@ -59,7 +59,6 @@ test("own kill and own death are marked", async ({ page }) => {
   const hunter = view("cccc0003", "Hunter", 200);
   let joined = false;
   await page.route("**/api/blobs/join", (route) => {
-    joined = true;
     return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(me) });
   });
   await mockStream(page, [me, prey, hunter], [eaten(me, prey), eaten(hunter, me)], () => joined);
@@ -67,6 +66,10 @@ test("own kill and own death are marked", async ({ page }) => {
   await page.waitForFunction(() => window.__blobs?.state);
   await page.fill("#blobs-name", "me");
   await page.click("#blobs-play");
+  // The stream may only deliver the events once the page has processed the join response (it hides the
+  // form then); earlier it does not know its own id yet and could not mark the items.
+  await expect(page.locator("#blobs-join")).toBeHidden();
+  joined = true;
   await expect(items(page)).toHaveCount(2);
   await expect(items(page).nth(1)).toHaveClass("mine-kill");
   await expect(items(page).nth(1)).toHaveText("me ate Prey (20)");
@@ -85,7 +88,6 @@ test("own death is marked even when no frame was drawn since joining", async ({ 
   const hunter = view("cccc0003", "Hunter", 200);
   let joined = false;
   await page.route("**/api/blobs/join", (route) => {
-    joined = true;
     return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify(me) });
   });
   await mockStream(page, [me, prey, hunter], [eaten(me, prey), eaten(hunter, me)], () => joined);
@@ -93,6 +95,10 @@ test("own death is marked even when no frame was drawn since joining", async ({ 
   await page.waitForFunction(() => window.__blobs?.state);
   await page.fill("#blobs-name", "me");
   await page.click("#blobs-play");
+  // The stream may only deliver the events once the page has processed the join response (it hides the
+  // form then); earlier it does not know its own id yet and could not mark the items.
+  await expect(page.locator("#blobs-join")).toBeHidden();
+  joined = true;
   await expect(items(page)).toHaveCount(2);
   await expect(items(page).nth(1)).toHaveClass("mine-kill");
   await expect(items(page).nth(0)).toHaveClass("mine-death");
