@@ -2,6 +2,8 @@ import { initHud } from "/static/hud.js";
 import { createAtmosphere } from "/static/atmosphere.js";
 import { createWorld, resizeWorld, step } from "/static/world-sim.js";
 import { createEvents } from "/static/events.js";
+import "/static/events-ecosystem.js";
+import { drawEcosystemEffect } from "/static/events-ecosystem.js";
 import { createTicker } from "/static/ticker.js";
 import { createStats } from "/static/stats.js";
 import { drawCreature, renderLegend } from "/static/render-species.js";
@@ -73,6 +75,8 @@ function drawEffects() {
         ctx.arc(c.x, c.y, c.radius + 3, 0, Math.PI * 2);
         ctx.stroke();
       }
+    } else {
+      drawEcosystemEffect(ctx, e);
     }
   }
 }

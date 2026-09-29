@@ -74,6 +74,14 @@ const HANDLERS = {
   },
 };
 
+// Extension point: adds an event type. handler(world, ctx, opts) returns { text, affected }.
+// ctx = { random, config, effects }; an effect with an `expire(world)` function is called when it runs out.
+export function registerEvent(type, handler) {
+  if (typeof handler !== "function") throw new TypeError(`Handler for event "${type}" must be a function`);
+  HANDLERS[type] = handler;
+  if (!EVENT_TYPES.includes(type)) EVENT_TYPES.push(type);
+}
+
 // Random world events: a seeded scheduler plus the event definitions. No DOM access.
 export function createEvents({ seed, random, config } = {}) {
   const rng = random ?? (seed === undefined ? Math.random : mulberry32(seed));
@@ -103,6 +111,7 @@ export function createEvents({ seed, random, config } = {}) {
       }
       if (effect.age >= effect.duration) {
         if (effect.type === "plague") for (const c of effect.victims) c.plague--;
+        effect.expire?.(world);
         ctx.effects.splice(i, 1);
       }
     }
