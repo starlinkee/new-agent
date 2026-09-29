@@ -44,6 +44,13 @@ def gql(query, variables=None):
             if data.get("errors"):
                 raise RuntimeError(data["errors"][0]["message"])
             return data["data"]
+        except urllib.error.HTTPError as e:
+            # 4xx (e.g. "Query too complex") will not fix itself: fail with Linear's message. 429/5xx are retried.
+            if 400 <= e.code < 500 and e.code != 429:
+                raise RuntimeError(f"Linear rejected the request (HTTP {e.code}): {e.read()[:500].decode(errors='replace')}")
+            last = e
+            print(f"  linear unavailable ({e}), retry {attempt + 1}/6", flush=True)
+            time.sleep(5 * (attempt + 1))
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             last = e
             print(f"  linear unavailable ({e}), retry {attempt + 1}/6", flush=True)
@@ -64,8 +71,8 @@ def project_url_from_workflow():
 def resolve_project(url):
     slug_id = url.rstrip("/").split("/")[-1].split("-")[-1]
     nodes = gql(
-        """query($s:String!){projects(filter:{slugId:{eq:$s}}){nodes{id name
-        teams{nodes{id key states{nodes{id name type}}}}}}}""",
+        """query($s:String!){projects(first:1, filter:{slugId:{eq:$s}}){nodes{id name
+        teams(first:5){nodes{id key states(first:50){nodes{id name type}}}}}}}""",
         {"s": slug_id},
     )["projects"]["nodes"]
     if not nodes:
@@ -76,12 +83,19 @@ def resolve_project(url):
 
 
 def project_issues(project_id):
-    d = gql(
-        """query($p:String!){project(id:$p){issues(first:250){nodes{id identifier title url state{name}
-        inverseRelations{nodes{type issue{identifier}}}}}}}""",
-        {"p": project_id},
-    )
-    return {n["title"]: n for n in d["project"]["issues"]["nodes"]}
+    # Paged, with bounded nested lists: Linear rejects queries above 10 000 complexity points
+    # (roughly page size x nested page size).
+    issues, after = {}, None
+    while True:
+        page = gql(
+            """query($p:String!,$a:String){project(id:$p){issues(first:100,after:$a){nodes{id identifier title url
+            state{name} inverseRelations(first:20){nodes{type issue{identifier}}}} pageInfo{hasNextPage endCursor}}}}""",
+            {"p": project_id, "a": after},
+        )["project"]["issues"]
+        issues.update({n["title"]: n for n in page["nodes"]})
+        if not page["pageInfo"]["hasNextPage"]:
+            return issues
+        after = page["pageInfo"]["endCursor"]
 
 
 def topo_order(keys, edges):

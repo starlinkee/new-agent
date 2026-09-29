@@ -39,6 +39,7 @@ Think through the cross-ticket traps before writing the tickets:
 - **Shared server state.** All specs run against one server, so specs must not assume a blank or initial state. They make a change and assert that change.
 - **Features that restrict other features** (rate limits, auth, quotas) must not break the other tickets' specs. Scope them per client (for example a cookie: each Playwright context has its own cookie jar), allow bursts, and make limits configurable through handler options.
 - Timing-based UI (countdowns, animations, replays) must be testable: use a mocked response with short delays (`page.route`) or a fixed total duration.
+- **Interfaces that several tickets share** (the foundation's hook and event shapes, the shell's plugin `ctx`, route ownership, which ticket owns which DOM element or id, where styles go). Workers never talk to each other, and a later ticket builds on whatever an earlier one actually shipped. If two tickets would each have to guess the other's side, write a **contract** (see step 4). For small features with one obvious interface, the Scope alone is enough; do not add a contract just to have one.
 
 ## 4. Write the tickets
 
@@ -63,6 +64,7 @@ Use the same format as the existing tickets:
 - Title: `<Feature> <i>/<n>: <what>`, numbered in dependency order.
 - Refer to other tickets **only** as `{{key}}` placeholders. The script replaces them with the real `NEW-<N>` identifiers. The worker's "Zero" precheck reads blockers from the description, so a blocker written as "Pixels 2/7" alone is not caught. The script refuses a blocked ticket that does not mention its blocker.
 - Be specific: file paths, ids, API shapes, limits, status codes. The worker has no other context.
+- **Contracts (when cooperation matters).** Put each shared interface in a `**Contract: <name>**` section between Scope and Acceptance. Copy the text word for word into every ticket that provides or uses it: the ticket that defines it and every ticket that depends on it. Keep the text in one variable in your generator so the copies cannot drift. Say who defines it and who uses it, and say "implement it exactly; if it seems wrong, still implement it as written and explain the problem in the PR Notes", so no worker changes it quietly. Cover exact signatures and shapes (e.g. `subscribe(listener)` events, `ctx` members and when they are called), who owns what (routes, DOM containers that get re-rendered, reserved ids per plugin, CSS files), and rules that keep tickets independent (plugins do not import each other, order does not matter). Give behaviour that two tickets could both implement to exactly one of them (example: the page, not the countdown plugin, disables closed poll buttons).
 
 ## 5. Push to Linear with the script, not by hand
 
