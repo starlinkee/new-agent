@@ -103,8 +103,14 @@ test.describe("pixels replay", () => {
     expect(await canvasPixels(page)).toBe(live);
   });
 
-  test("painting is disabled during replay and Stop restores the live board", async ({ page, request }) => {
-    for (let i = 0; i < 40; i++) await paint(request, i, 30, (i % 15) + 1);
+  test("painting is disabled during replay and Stop restores the live board", async ({ page, playwright, baseURL }) => {
+    // 40 paints make the replay long enough to click during it. Paints are rate limited per client
+    // (burst of 10), so each batch of 10 comes from a fresh client with its own cookie jar.
+    for (let batch = 0; batch < 4; batch++) {
+      const client = await playwright.request.newContext({ baseURL });
+      for (let i = batch * 10; i < batch * 10 + 10; i++) await paint(client, i, 30, (i % 15) + 1);
+      await client.dispose();
+    }
     await page.goto("/pixels");
     await page.waitForFunction(() => window.__pixels?.board);
     const live = await canvasPixels(page);
