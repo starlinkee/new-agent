@@ -21,6 +21,8 @@ import { handlePulseLive } from "./pulse-live.js";
 import { handleBlobs } from "./blobs.js";
 import { handleBlobStream } from "./blobs-stream.js";
 import { handleBlobScores } from "./blobs-scores.js";
+import { handleBiome } from "./biome.js";
+import { handleBiomeStream } from "./biome-stream.js";
 import { startDefaultBots } from "./blobs-bots.js";
 
 export function renderPage() {
@@ -50,6 +52,8 @@ http
       if (await handleBlobs(req, res)) return;
       if (await handlePulseLive(req, res)) return;
       if (await handlePulse(req, res)) return;
+      if (await handleBiomeStream(req, res)) return;
+      if (await handleBiome(req, res)) return;
       await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage, "/polls": renderPollsPage, "/blobs": renderBlobsPage, "/pulse": renderPulsePage });
     } catch {
       if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
