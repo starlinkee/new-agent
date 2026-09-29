@@ -12,6 +12,7 @@ import { handlePixels } from "./pixels.js";
 import { handlePixelStream } from "./pixels-stream.js";
 import { handlePixelsHistory } from "./pixels-history.js";
 import { handlePolls } from "./polls.js";
+import { handlePollStream } from "./polls-stream.js";
 
 export function renderPage() {
   return layout({
@@ -31,6 +32,7 @@ http
       if (await handlePixelStream(req, res)) return;
       if (await handlePixelsHistory(req, res)) return;
       if (await handlePixels(req, res)) return;
+      if (await handlePollStream(req, res)) return;
       if (await handlePolls(req, res)) return;
       await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage, "/polls": renderPollsPage });
     } catch {

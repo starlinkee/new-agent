@@ -1,0 +1,3 @@
+#poll-live { font-size: 0.85rem; color: #6b7280; }
+#poll-live[data-state="live"] { color: #15803d; }
+#poll-live[data-state="live"]::before { content: "\25CF\00a0"; }
