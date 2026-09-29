@@ -1,6 +1,9 @@
+import json
 import os
+import re
 import subprocess
 import sys
+import urllib.request
 
 from claude_cli import run_claude_agent
 
@@ -32,6 +35,34 @@ def comment(body):
                    input=f"**AI Merge Doctor (Opus)**\n\n{body}", text=True, check=True)
 
 
+def ticket_text():
+    """Title and description of the Linear ticket this branch (symphony/new-N) implements.
+
+    The description is the original intent; conflict and review fixes must not lose it.
+    Best effort: without the key or on any error the doctor works from the PR alone.
+    """
+    m = re.fullmatch(r"symphony/(new-\d+)", HEAD)
+    if not m or not os.environ.get("LINEAR_API_KEY"):
+        return ""
+    ident = m.group(1).upper()
+    try:
+        req = urllib.request.Request(
+            "https://api.linear.app/graphql",
+            data=json.dumps({"query": "query($n:Float!){issues(filter:{number:{eq:$n}})"
+                             "{nodes{identifier title description}}}",
+                             "variables": {"n": int(ident.split("-")[1])}}).encode(),
+            headers={"Authorization": os.environ["LINEAR_API_KEY"],
+                     "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            nodes = json.load(r)["data"]["issues"]["nodes"]
+        issue = next(i for i in nodes if i["identifier"] == ident)
+        return f"{ident}: {issue['title']}\n\n{issue['description'] or '(no description)'}"
+    except Exception as e:
+        print(f"could not read the Linear ticket: {e}", file=sys.stderr)
+        return ""
+
+
 def tail(text, n=6000):
     return text[-n:]
 
@@ -40,6 +71,7 @@ run("git", "config", "user.name", "ai-merge-doctor")
 run("git", "config", "user.email", "ai-merge-doctor@users.noreply.github.com")
 run("git", "fetch", "origin", BASE)
 original_head = run("git", "rev-parse", "HEAD").stdout.strip()
+ticket = ticket_text()
 pr_body = run("gh", "pr", "view", PR, "--json", "body", "--jq", ".body").stdout
 
 def jury_findings():
@@ -87,7 +119,10 @@ state = (
 try:
     summary = run_claude_agent(
         system_prompt,
-        f"{state}\nThe worker agent's own account of what it tried:\n\n{pr_body}"
+        f"{state}\n"
+        + (f"The Linear ticket this PR implements (the original intent; keep it intact):\n\n{ticket}\n\n"
+           if ticket else "")
+        + f"The worker agent's own account of what it tried:\n\n{pr_body}"
         + (f"\n\nThe AI jury's latest verdict on this PR (a rejection):\n\n{findings}" if findings else ""),
         ["Bash(git *)", "Bash(npm *)", "Bash(npx *)", "Bash(node *)",
          "Read", "Edit", "Write", "Glob", "Grep"],

@@ -9,16 +9,13 @@ Rules, per ticket NEW-N with branch symphony/new-n, for tickets in Done or
 In Review:
   PR merged                      -> Done
   PR open                        -> In Review, then look at the AI jury verdict:
-    verdict REJECTED -> Todo (rework the SAME branch, a fresh worker reads the jury
-        comments and rebases if needed), at most MAX_REWORK times, then Backlog
-    merge conflicts only -> the PR gets the `needs-expert-review` label, which starts the
-        AI Merge Doctor (Opus rebases, resolves, tests, pushes); the ticket stays In Review
-        and the jury + auto-merge take it from there. A retry starts as soon as the previous run has
-        finished without fixing it; at most MAX_DOCTOR attempts, then Backlog
+    verdict REJECTED or merge conflicts -> the PR gets the `needs-expert-review` label, which
+        starts the AI Merge Doctor (Opus rebases, fixes the jury's findings, tests, pushes).
+        The ticket stays In Review; the jury reviews the new head and auto-merge follows.
+        A retry starts as soon as the previous run has finished without fixing it; at most
+        MAX_DOCTOR attempts, then Backlog. Workers only handle tickets that have no PR yet.
     verdict APPROVED, PR mergeable -> squash-merge it, ticket Done (AUTO_MERGE=0 disables)
     no verdict for the current head commit yet -> wait
-  Todo ticket the reconciler sent there for a rework that Contrabass never started (no run
-    for TODO_STALE_MIN) and whose PR conflicts or was REJECTED -> Merge Doctor as well
   no PR, ticket Done > GRACE min -> Todo (redo), at most MAX_REDO times, then Backlog
   PR closed unmerged             -> Todo (redo), same cap
 
@@ -55,12 +52,9 @@ REPO = os.environ.get("GH_REPO", "starlinkee/new-agent")
 TEAM_KEY = os.environ.get("LINEAR_TEAM_KEY", "NEW")
 GRACE_MIN = 10
 MAX_REDO = 2
-MAX_REWORK = 3
 MAX_DOCTOR = 3  # Merge Doctor runs per conflicting PR before a human is asked
 DOCTOR_START_MIN = 3  # a doctor run should show up in Actions within this long after the label
 DOCTOR_MAX_MIN = 70  # safety net: workflow timeout is 60 min
-MAX_STUCK = 2  # reworks in a row that left the branch head unchanged before a human is asked
-TODO_STALE_MIN = 15  # a Todo ticket after a rework that Contrabass has not started for this long is stuck
 ORPHAN_MIN = 3  # In Progress with no Contrabass run for this long = abandoned
 JURY_WAIT_MIN = 3  # a head commit older than this with no jury run/verdict gets the jury re-triggered
 CB_URL = os.environ.get("CB_URL", "http://localhost:8080")
@@ -173,7 +167,7 @@ def pr_info(branch):
     """Status of the PR for a branch, plus the jury verdict for its current head.
 
     Uses the REST API: `gh pr list --json` is GraphQL, and its 5000/hour quota ran
-    dry (every ticket, every round), which froze the whole rework loop.
+    dry (every ticket, every round), which froze the whole loop.
     """
     if branch in MERGED:
         return {"status": "merged"}
@@ -278,8 +272,7 @@ def doctor_running(pr_title):
 
 
 def call_doctor(issue, info, states, memory, dry):
-    """Conflicting PR (or a rejected one whose rework worker never started): let the
-    Merge Doctor (Opus, in GitHub Actions) fix it; it also addresses the jury's findings.
+    """Conflicting or jury-rejected PR: let the Merge Doctor (Opus, in GitHub Actions) fix it.
 
     The workflow starts on the `labeled` event, so a retry has to remove and re-add the
     label. Retries start as soon as the previous run has finished without fixing the
@@ -317,38 +310,16 @@ def call_doctor(issue, info, states, memory, dry):
 def handle_open_pr(issue, info, states, memory, dry):
     """One decision, one Linear write, so tickets never flap between states."""
     ident, num, cur = issue["identifier"], info["number"], issue["state"]["name"]
-    reason = None
-    if info["verdict"] == "REJECTED":
-        reason = "jury REJECTED"
-    elif info["mergeable"] == "CONFLICTING":
+    key = "doctor:" + ident
+    if info["verdict"] == "REJECTED" or info["mergeable"] == "CONFLICTING":
+        # Opus fixes the jury's findings and rebases on the same branch; no detour via Todo.
         return call_doctor(issue, info, states, memory, dry)
-    key = "rework:" + ident
-    rec = memory.get(key)
-    if not isinstance(rec, dict):
-        rec = {"n": rec or 0, "head": None}
-    if reason:
-        # Reworks in a row that left the branch where it was: the worker made no
-        # progress. One such round can be bad luck (Contrabass killed the run), so
-        # allow MAX_STUCK before retrying would just loop.
-        stuck = rec.get("stuck", 0) + 1 if rec["head"] == info["head"] else 0
-        if stuck >= MAX_STUCK:
-            set_state(issue, "Backlog", states, dry,
-                      f"PR #{num}: {reason}, worker pushed nothing in {stuck} rework rounds - needs a human")
-            memory.pop(key, None)
-        elif rec["n"] >= MAX_REWORK:
-            set_state(issue, "Backlog", states, dry,
-                      f"PR #{num}: {reason} after {rec['n']} rework rounds - needs a human")
-            memory.pop(key, None)
-        else:
-            set_state(issue, "Todo", states, dry, f"PR #{num}: {reason}; rework #{rec['n'] + 1}")
-            memory[key] = {"n": rec["n"] + 1, "head": info["head"], "stuck": stuck}
-    elif info["verdict"] == "APPROVED" and info["mergeable"] == "MERGEABLE" and AUTO_MERGE:
+    if info["verdict"] == "APPROVED" and info["mergeable"] == "MERGEABLE" and AUTO_MERGE:
         log(f"{ident}: jury APPROVED, merging PR #{num}")
         if not dry:
             gh("pr", "merge", str(num), "--repo", REPO, "--squash", "--delete-branch")
             set_state(issue, "Done", states, dry, f"PR #{num} merged")
         memory.pop(key, None)
-        memory.pop("doctor:" + ident, None)
     else:
         if cur != "In Review":
             set_state(issue, "In Review", states, dry, "PR open, awaiting jury/merge")
@@ -402,7 +373,7 @@ def reconcile(dry):
     ensure_in_review(team_id, states, dry)
     d = gql(
         """query($k:String!){issues(first:100,filter:{team:{key:{eq:$k}},
-        state:{name:{in:["Done","In Review","In Progress","Todo"]}}}){nodes{id identifier
+        state:{name:{in:["Done","In Review","In Progress"]}}}){nodes{id identifier
         state{name} updatedAt}}}""",
         {"k": TEAM_KEY},
     )
@@ -420,15 +391,6 @@ def reconcile(dry):
                     or idle < dt.timedelta(minutes=ORPHAN_MIN)):
                 continue
             log(f"{ident}: In Progress but Contrabass has no run for it")
-        elif cur == "Todo":
-            # Only tickets this reconciler sent to Todo for a rework that Contrabass then
-            # never started (it parks a run it could not verify and does not retry it).
-            idle = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(
-                issue["updatedAt"].replace("Z", "+00:00"))
-            if ("rework:" + ident not in memory or activity is None or ident in activity
-                    or idle < dt.timedelta(minutes=TODO_STALE_MIN)):
-                continue
-            log(f"{ident}: Todo for {int(idle.total_seconds() / 60)} min after a rework, Contrabass has no run for it")
         try:
             info = pr_info(branch)
         except RateLimited:
@@ -442,13 +404,6 @@ def reconcile(dry):
             if cur != "Done":
                 set_state(issue, "Done", states, dry, "PR merged")
         elif pr == "open":
-            if cur == "Todo":
-                # The rework worker never started (or was parked by Contrabass): Opus does it.
-                if info["mergeable"] == "CONFLICTING" or info["verdict"] == "REJECTED":
-                    call_doctor(issue, info, states, memory, dry)
-                else:  # pushed and not rejected for this head: In Review, jury, auto-merge
-                    handle_open_pr(issue, info, states, memory, dry)
-                continue
             handle_open_pr(issue, info, states, memory, dry)
         elif cur in ("Done", "In Progress"):  # none / closed; Contrabass's own Done, or a dropped run
             age = dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(
