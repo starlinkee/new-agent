@@ -32,9 +32,15 @@ export function renderWorldPage() {
       <dt>Color</dt><dd><span id="insp-swatch" class="swatch"></span> <span id="insp-color"></span></dd>
     </dl>
   </aside>
+  <aside id="panels">
+    <section id="panel-stats" hidden><h2>Stats</h2></section>
+    <section id="panel-inspector" hidden><h2>Inspector</h2></section>
+    <section id="panel-save" hidden><h2>Save / Load</h2></section>
+  </aside>
 </div>
 <ol id="ticker" aria-live="polite" style="list-style:none;margin:0.5rem 0 0;padding:0;font:0.9rem monospace"></ol>
 <script type="module" src="/static/world.js"></script>`,
-    head: `<link rel="stylesheet" href="/static/world.css">`,
+    head: `<link rel="stylesheet" href="/static/world.css">
+<link rel="stylesheet" href="/static/world-panels.css">`,
   });
 }

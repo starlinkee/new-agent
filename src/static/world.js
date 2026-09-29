@@ -4,6 +4,7 @@ import { createEvents } from "/static/events.js";
 import { createTicker } from "/static/ticker.js";
 import { createStats } from "/static/stats.js";
 import { drawCreature, renderLegend } from "/static/render-species.js";
+import { mountPanels } from "/static/panels/index.js";
 
 const canvas = document.getElementById("world");
 const ctx = canvas.getContext("2d");
@@ -99,4 +100,5 @@ function frame(now) {
 
 window.addEventListener("resize", resize);
 resize();
+mountPanels({ world, events, canvas });
 requestAnimationFrame(frame);
