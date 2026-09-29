@@ -6,10 +6,13 @@ async function revealSlots(page) {
   await page.evaluate(() => document.querySelectorAll("#panels section").forEach((s) => (s.hidden = false)));
 }
 
-test("world page has the three named panel slots and hides them while empty", async ({ page }) => {
+test("world page has the three named panel slots and shows only mounted ones", async ({ page }) => {
   await page.goto("/world");
   for (const id of SLOTS) await expect(page.locator(`#panels > section#${id} > h2`)).toHaveCount(1);
-  await expect(page.locator("#panels")).toBeHidden();
+  await expect(page.locator("#panels")).toBeVisible();
+  await expect(page.locator("#panel-stats")).toBeVisible();
+  await expect(page.locator("#panel-inspector")).toBeHidden();
+  await expect(page.locator("#panel-save")).toBeHidden();
   await expect(page.locator("canvas#world")).toBeVisible();
 });
 

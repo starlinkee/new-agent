@@ -27,8 +27,6 @@ const legend = document.createElement("div");
 legend.id = "legend";
 document.querySelector(".world-layout").after(legend);
 renderLegend(legend);
-const unmountPanels = mountPanels({ world, stats, control });
-window.addEventListener("pagehide", unmountPanels);
 
 function resize() {
   const ratio = window.devicePixelRatio || 1;
@@ -102,5 +100,6 @@ function frame(now) {
 
 window.addEventListener("resize", resize);
 resize();
-mountPanels({ world, events, canvas });
+const unmountPanels = mountPanels({ world, events, canvas, stats, control });
+window.addEventListener("pagehide", unmountPanels);
 requestAnimationFrame(frame);

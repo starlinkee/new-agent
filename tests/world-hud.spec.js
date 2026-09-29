@@ -100,7 +100,7 @@ test("clicks respect the food and creature caps", async ({ page }) => {
     await canvas.click({ position: { x: 50 + i, y: 50 } });
   }
   for (let i = 0; i < limits.maxCreatures; i++) {
-    await canvas.click({ position: { x: 300 + i, y: 300 }, modifiers: ["Shift"] });
+    await canvas.click({ position: { x: 100 + (i % 400), y: 300 }, modifiers: ["Shift"] });
   }
   const sizes = await page.evaluate(() => ({ food: window.__world.food.length, creatures: window.__world.creatures.length }));
   expect(sizes.food).toBeLessThanOrEqual(limits.maxFood);

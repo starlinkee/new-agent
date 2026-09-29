@@ -38,7 +38,6 @@ export function renderWorldPage() {
     <section id="panel-save" hidden><h2>Save / Load</h2></section>
   </aside>
 </div>
-<section id="panel-stats"></section>
 <ol id="ticker" aria-live="polite" style="list-style:none;margin:0.5rem 0 0;padding:0;font:0.9rem monospace"></ol>
 <script type="module" src="/static/world.js"></script>`,
     head: `<link rel="stylesheet" href="/static/world.css">
