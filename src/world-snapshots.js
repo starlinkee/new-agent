@@ -60,7 +60,7 @@ function readJson(req) {
   if (type !== "application/json") {
     return Promise.reject(new HttpError(415, "content-type must be application/json"));
   }
-  const tooLarge = () => new HttpError(413, "payload too large", { connection: "close" });
+  const tooLarge = () => new HttpError(413, "payload too large");
   if (Number(req.headers["content-length"]) > MAX_BODY_BYTES) return Promise.reject(tooLarge());
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -115,7 +115,7 @@ function validateCreate(body) {
   }
   const size = Buffer.byteLength(JSON.stringify(data), "utf8");
   if (size > MAX_SNAPSHOT_BYTES) {
-    throw new HttpError(413, "snapshot too large", { connection: "close" });
+    throw new HttpError(413, "snapshot too large");
   }
   return { name, data, size };
 }
@@ -159,7 +159,9 @@ export function createSnapshotHandler(store = new SnapshotStore()) {
       if (!(err instanceof HttpError)) throw err;
       if (res.headersSent) return true;
       send(res, err.status, { error: err.message }, err.headers);
-      if (err.status === 413) res.once("finish", () => req.destroy());
+      // Drain the rest of an oversize upload instead of resetting the socket, so the
+      // client can finish writing and read the 413 rather than fail with ECONNRESET.
+      if (err.status === 413) req.resume();
     }
     return true;
   };
