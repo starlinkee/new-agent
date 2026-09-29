@@ -1,0 +1,11 @@
+.blobs-tool[data-plugin="scores"] { position: absolute; left: 0.75rem; bottom: 0.75rem; }
+#blobs-scores { min-width: 10rem; max-width: 14rem; padding: 0.5rem 0.75rem; background: rgba(255, 255, 255, 0.85); border-radius: 8px; font-size: 0.85rem; }
+#blobs-scores h3 { margin: 0 0 0.25rem; font-size: 0.9rem; }
+#blobs-scores ol { margin: 0; padding-left: 1.25rem; }
+#blobs-scores li { padding-left: 0.25rem; }
+#blobs-scores li::marker { color: #6b7280; }
+#blobs-scores li { display: list-item; }
+.blobs-scores-name { display: inline-block; max-width: 8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.blobs-scores-mass { float: right; font-variant-numeric: tabular-nums; }
+.blobs-scores-status { margin: 0 0 0.25rem; color: #b91c1c; }
+.blobs-scores-status[hidden] { display: none; }
