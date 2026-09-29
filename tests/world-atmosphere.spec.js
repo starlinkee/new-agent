@@ -2,7 +2,13 @@ import { test, expect } from "@playwright/test";
 
 async function open(page) {
   await page.goto("/world");
-  await page.waitForFunction(() => window.__atmosphere);
+  await page.waitForFunction(() => window.__atmosphere && window.__world && window.__worldControl);
+  // The live sim draws creatures and food over the sky; freeze and empty it so sampled pixels are pure atmosphere.
+  await page.evaluate(() => {
+    window.__worldControl.paused = true;
+    window.__world.creatures = [];
+    window.__world.food = [];
+  });
 }
 
 async function setAndDraw(page, time, weather = "clear") {
