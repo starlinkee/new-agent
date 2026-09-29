@@ -5,8 +5,9 @@
 
 import * as live from "./live.js";
 import * as viewport from "./viewport.js";
+import * as exportPng from "./export.js";
 
-export const PLUGINS = [live, viewport];
+export const PLUGINS = [live, viewport, exportPng];
 
 // One failing plugin must not stop the page; returns a function that unmounts the plugins that started.
 export function mountPlugins(ctx) {
