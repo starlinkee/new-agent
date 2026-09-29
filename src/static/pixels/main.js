@@ -1,5 +1,6 @@
 import { parseBoard } from "./board.js";
 import { mountPlugins } from "./plugins/index.js";
+import { createView, cellAt, frameFromRect } from "./viewport-math.js";
 
 const canvas = document.getElementById("pixels");
 const palette = document.getElementById("palette");
@@ -41,6 +42,7 @@ async function main() {
     return () => paintListeners.delete(listener);
   };
 
+  const view = createView();
   let selected = 0;
   palette.addEventListener("click", (event) => {
     const button = event.target.closest(".swatch-btn");
@@ -50,9 +52,8 @@ async function main() {
   });
 
   canvas.addEventListener("click", async (event) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.floor(((event.clientX - rect.left) / rect.width) * board.width);
-    const y = Math.floor(((event.clientY - rect.top) / rect.height) * board.height);
+    const frame = frameFromRect(canvas.getBoundingClientRect(), view);
+    const { x, y } = cellAt(view, frame.size, board.width, event.clientX - frame.left, event.clientY - frame.top);
     if (!board.inRange(x, y)) return;
     const color = selected;
     const previous = board.get(x, y);
@@ -87,8 +88,8 @@ async function main() {
   });
 
   redraw();
-  window.__pixels = { board, redraw };
-  mountPlugins({ board, canvas, toolbar, redraw, onPaint });
+  window.__pixels = { board, redraw, view };
+  mountPlugins({ board, canvas, toolbar, redraw, view, onPaint });
 }
 
 main();
