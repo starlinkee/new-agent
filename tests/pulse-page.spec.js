@@ -173,10 +173,10 @@ test.describe("pulse plugin cards", () => {
       ctx.addCard({ name: "c", title: "C", span: "half", order: 30 });
       ctx.addCard({ name: "a", title: "A", span: "half", order: 10 });
       ctx.addCard({ name: "b", title: "B", span: "full", order: 20 });
-      ctx.addCard({ name: "d", title: "D", span: "half", order: 40 });
+      ctx.addCard({ name: "d", title: "D", span: "half", order: 31 });
     });
     const order = await page.locator("#pulse-grid > .pulse-card").evaluateAll((els) => els.map((e) => e.dataset.plugin));
-    expect(order.filter((name) => "abcd".includes(name))).toEqual(["a", "b", "c", "d"]);
+    expect(order.filter((name) => ["a", "b", "c", "d"].includes(name))).toEqual(["a", "b", "c", "d"]);
     await expect(page.locator('.pulse-card[data-plugin="a"] .pulse-card-title')).toHaveText("A");
 
     const box = (name) => page.locator(`.pulse-card[data-plugin="${name}"]`).boundingBox();
