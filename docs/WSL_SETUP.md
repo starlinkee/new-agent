@@ -186,14 +186,21 @@ states, and `started` would be re-run as an orphan. `cb sync-log` shows what it 
 - **Adding the label:** use `gh issue edit <n> --add-label needs-expert-review`
   (or the REST API). `gh pr edit --add-label` fails on gh 2.46 with a
   Projects (classic) GraphQL deprecation error and adds nothing.
+- **Merge doctor is autonomous.** The label `needs-expert-review` (added by the
+  worker when it cannot rebase, or by `linear_sync.py` when a PR has merge
+  conflicts) starts `merge-doctor.yml`. Opus (Claude Code CLI, subscription
+  token) rebases the PR branch onto master, resolves the conflicts, runs
+  `npm run test:ai` and fixes failures. `run_merge_doctor.py` then re-checks
+  (on top of master, no conflict markers, tests green) and pushes with
+  `--force-with-lease`; the agent itself has no push credentials. A push with
+  `GITHUB_TOKEN` does not start the jury, so the reconciler reopens the PR
+  (`retrigger_jury`), the jury reviews, and the reconciler squash-merges.
+  If the doctor fails, the reconciler retries (`MAX_DOCTOR`) and then parks the
+  ticket in Backlog with a comment.
 - **Merge doctor must use `pull_request_target`.** GitHub does not run
-  `pull_request` workflows for a PR with merge conflicts, so the doctor would
-  never fire on the PRs it exists for. It diffs against the merge base
-  (`origin/<base>...pr-head`) and never executes PR code.
-- Tested on 2026-09-28 with a throwaway conflicting PR: the label triggers the
-  workflow, it checks out, diffs and reads the PR body; the comment step was
-  verified with a stubbed Anthropic client. A real Opus reply still needs the
-  workspace secret.
+  `pull_request` workflows for a PR with merge conflicts. Scripts are checked
+  out from the base branch (`_trusted/`), the PR branch separately, and only
+  same-repo branches are processed.
 - **Two clones drift apart** (WSL and Windows). Work in WSL, sync via GitHub,
   and keep `WORKFLOW.md` identical in both.
 - **Playwright QA** (`npm run test:ai`): the WSL clone has no `package.json`

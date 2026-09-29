@@ -9,8 +9,12 @@ Rules, per ticket NEW-N with branch symphony/new-n, for tickets in Done or
 In Review:
   PR merged                      -> Done
   PR open                        -> In Review, then look at the AI jury verdict:
-    verdict REJECTED (or PR has merge conflicts) -> Todo (rework the SAME branch,
-        a fresh worker reads the jury comments), at most MAX_REWORK times, then Backlog
+    verdict REJECTED -> Todo (rework the SAME branch, a fresh worker reads the jury
+        comments and rebases if needed), at most MAX_REWORK times, then Backlog
+    merge conflicts only -> the PR gets the `needs-expert-review` label, which starts the
+        AI Merge Doctor (Opus rebases, resolves, tests, pushes); the ticket stays In Review
+        and the jury + auto-merge take it from there. A retry starts as soon as the previous run has
+        finished without fixing it; at most MAX_DOCTOR attempts, then Backlog
     verdict APPROVED, PR mergeable -> squash-merge it, ticket Done (AUTO_MERGE=0 disables)
     no verdict for the current head commit yet -> wait
   no PR, ticket Done > GRACE min -> Todo (redo), at most MAX_REDO times, then Backlog
@@ -50,6 +54,9 @@ TEAM_KEY = os.environ.get("LINEAR_TEAM_KEY", "NEW")
 GRACE_MIN = 10
 MAX_REDO = 2
 MAX_REWORK = 3
+MAX_DOCTOR = 3  # Merge Doctor runs per conflicting PR before a human is asked
+DOCTOR_START_MIN = 3  # a doctor run should show up in Actions within this long after the label
+DOCTOR_MAX_MIN = 70  # safety net: workflow timeout is 60 min
 MAX_STUCK = 2  # reworks in a row that left the branch head unchanged before a human is asked
 ORPHAN_MIN = 3  # In Progress with no Contrabass run for this long = abandoned
 JURY_WAIT_MIN = 3  # a head commit older than this with no jury run/verdict gets the jury re-triggered
@@ -186,7 +193,7 @@ def pr_info(branch):
             verdict = m.group(1)  # latest wins; older verdicts are for older commits
     mergeable = {True: "MERGEABLE", False: "CONFLICTING"}.get(pr["mergeable"], "UNKNOWN")
     return {"status": "open", "number": num, "mergeable": mergeable,
-            "head": pr["head"]["sha"], "head_at": head_at, "branch": branch, "verdict": verdict}
+            "head": pr["head"]["sha"], "head_at": head_at, "title": pr["title"], "branch": branch, "verdict": verdict}
 
 
 def set_state(issue, name, states, dry, why):
@@ -233,6 +240,53 @@ def retrigger_jury(ident, info, memory, dry):
         gh("pr", "reopen", str(info["number"]), "--repo", REPO)
 
 
+def doctor_running(pr_title):
+    """True while a Merge Doctor run for this PR is queued or in progress.
+
+    The workflow is pull_request_target, so its runs belong to the base branch; the
+    run title is the PR title, which is the only thing tying a run to its PR.
+    """
+    runs = json.loads(gh("run", "list", "--repo", REPO, "--workflow", "merge-doctor.yml",
+                         "--limit", "20", "--json", "status,displayTitle") or "[]")
+    return any(r["displayTitle"] == pr_title and r["status"] != "completed" for r in runs)
+
+
+def call_doctor(issue, info, states, memory, dry):
+    """Conflicting PR: let the Merge Doctor (Opus, in GitHub Actions) fix it.
+
+    The workflow starts on the `labeled` event, so a retry has to remove and re-add the
+    label. Retries start as soon as the previous run has finished without fixing the
+    conflict; there is no fixed waiting time.
+    """
+    ident, num, cur = issue["identifier"], info["number"], issue["state"]["name"]
+    key = "doctor:" + ident
+    rec = memory.get(key) or {"n": 0, "at": 0}
+    if cur != "In Review":
+        set_state(issue, "In Review", states, dry, f"PR #{num} conflicts, Merge Doctor is on it")
+    since = time.time() - rec["at"]
+    if since < DOCTOR_START_MIN * 60:
+        return  # label just added; the run is not listed yet
+    if since < DOCTOR_MAX_MIN * 60 and doctor_running(info["title"]):
+        return
+    if rec["n"] >= MAX_DOCTOR:
+        set_state(issue, "Backlog", states, dry,
+                  f"PR #{num}: merge conflicts, Merge Doctor failed {rec['n']} times - needs a human")
+        memory.pop(key, None)
+        return
+    log(f"{ident}: PR #{num} still conflicts, calling Merge Doctor (attempt {rec['n'] + 1})")
+    memory[key] = {"n": rec["n"] + 1, "at": time.time()}
+    if not dry:
+        # gh issue edit, not gh pr edit: the latter fails on the Projects (classic) deprecation
+        for op in ("--remove-label", "--add-label"):
+            try:
+                gh("issue", "edit", str(num), "--repo", REPO, op, "needs-expert-review")
+            except RateLimited:
+                raise
+            except Exception:  # removing a label that is not there fails; harmless
+                if op == "--add-label":
+                    raise
+
+
 def handle_open_pr(issue, info, states, memory, dry):
     """One decision, one Linear write, so tickets never flap between states."""
     ident, num, cur = issue["identifier"], info["number"], issue["state"]["name"]
@@ -240,7 +294,7 @@ def handle_open_pr(issue, info, states, memory, dry):
     if info["verdict"] == "REJECTED":
         reason = "jury REJECTED"
     elif info["mergeable"] == "CONFLICTING":
-        reason = "merge conflicts with master"
+        return call_doctor(issue, info, states, memory, dry)
     key = "rework:" + ident
     rec = memory.get(key)
     if not isinstance(rec, dict):
@@ -267,6 +321,7 @@ def handle_open_pr(issue, info, states, memory, dry):
             gh("pr", "merge", str(num), "--repo", REPO, "--squash", "--delete-branch")
             set_state(issue, "Done", states, dry, f"PR #{num} merged")
         memory.pop(key, None)
+        memory.pop("doctor:" + ident, None)
     else:
         if cur != "In Review":
             set_state(issue, "In Review", states, dry, "PR open, awaiting jury/merge")

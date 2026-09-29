@@ -110,7 +110,7 @@ clean rebase after 2 attempts in the Merge phase:
    (`gh issue edit <number> --add-label needs-expert-review`). Use `gh issue edit`, not `gh pr edit`: the latter fails on the
    Projects (classic) GraphQL deprecation error and would not add the label.
 3. In the PR description, clearly state what you tried, what failed, and
-   the exact error/conflict output. This is read by a separate, more
-   capable reviewer model - give it everything it needs to pick up where
-   you left off, not a vague summary.
+   the exact error/conflict output. This is read by the Merge Doctor (Opus),
+   which then rebases, fixes and pushes the branch itself - give it
+   everything it needs to pick up where you left off, not a vague summary.
 4. Do not keep retrying past this point - stop and hand off.
