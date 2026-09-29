@@ -17,6 +17,7 @@ import { handlePollStream } from "./polls-stream.js";
 import { handlePollActivity } from "./polls-activity.js";
 import { handleBlobs } from "./blobs.js";
 import { handleBlobStream } from "./blobs-stream.js";
+import { handleBlobScores } from "./blobs-scores.js";
 import { startDefaultBots } from "./blobs-bots.js";
 
 export function renderPage() {
@@ -42,6 +43,7 @@ http
       if (await handlePollActivity(req, res)) return;
       if (await handlePolls(req, res)) return;
       if (await handleBlobStream(req, res)) return;
+      if (await handleBlobScores(req, res)) return;
       if (await handleBlobs(req, res)) return;
       await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage, "/polls": renderPollsPage, "/blobs": renderBlobsPage });
     } catch {
