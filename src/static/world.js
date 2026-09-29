@@ -2,6 +2,8 @@ import { initHud } from "/static/hud.js";
 import { createAtmosphere } from "/static/atmosphere.js";
 import { createWorld, resizeWorld, step } from "/static/world-sim.js";
 import { createEvents } from "/static/events.js";
+import { ECOSYSTEM_EVENTS } from "/static/events-ecosystem.js";
+import { ECOSYSTEM_RENDERERS } from "/static/render-ecosystem.js";
 import { createTicker } from "/static/ticker.js";
 import { createStats } from "/static/stats.js";
 import { drawCreature, renderLegend } from "/static/render-species.js";
@@ -12,7 +14,7 @@ const canvas = document.getElementById("world");
 const ctx = canvas.getContext("2d");
 const world = createWorld({ width: canvas.clientWidth, height: canvas.clientHeight });
 enablePredators(world);
-const events = createEvents();
+const events = createEvents({ extensions: ECOSYSTEM_EVENTS });
 const ticker = createTicker(document.getElementById("ticker"));
 const stats = createStats();
 const control = { paused: false, speed: 1 };
@@ -49,30 +51,46 @@ function resize() {
   resizeWorld(world, width, height);
 }
 
+// Draw code per effect type, fn(ctx2d, effect, world). Unknown types are reported once rather than vanishing silently.
+const EFFECT_RENDERERS = {
+  meteor(ctx, e) {
+    const t = Math.min(e.age / e.duration, 1);
+    ctx.strokeStyle = `rgba(255, 140, 40, ${1 - t})`;
+    ctx.fillStyle = `rgba(255, 80, 20, ${0.5 * (1 - t)})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.radius * Math.min(t * 3, 1), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  },
+  bloom(ctx, e) {
+    const t = Math.min(e.age / e.duration, 1);
+    ctx.fillStyle = `rgba(61, 220, 106, ${0.25 * (1 - t)})`;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+    ctx.fill();
+  },
+  plague(ctx, e) {
+    ctx.strokeStyle = "rgba(160, 90, 220, 0.8)";
+    ctx.lineWidth = 2;
+    for (const c of e.victims) {
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, c.radius + 3, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  },
+  ...ECOSYSTEM_RENDERERS,
+};
+const unrenderable = new Set();
+
 function drawEffects() {
   for (const e of events.effects) {
-    const t = Math.min(e.age / e.duration, 1);
-    if (e.type === "meteor") {
-      ctx.strokeStyle = `rgba(255, 140, 40, ${1 - t})`;
-      ctx.fillStyle = `rgba(255, 80, 20, ${0.5 * (1 - t)})`;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(e.x, e.y, e.radius * Math.min(t * 3, 1), 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    } else if (e.type === "bloom") {
-      ctx.fillStyle = `rgba(61, 220, 106, ${0.25 * (1 - t)})`;
-      ctx.beginPath();
-      ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (e.type === "plague") {
-      ctx.strokeStyle = "rgba(160, 90, 220, 0.8)";
-      ctx.lineWidth = 2;
-      for (const c of e.victims) {
-        ctx.beginPath();
-        ctx.arc(c.x, c.y, c.radius + 3, 0, Math.PI * 2);
-        ctx.stroke();
-      }
+    const render = EFFECT_RENDERERS[e.type];
+    if (render) {
+      render(ctx, e, world);
+    } else if (!unrenderable.has(e.type)) {
+      unrenderable.add(e.type);
+      console.warn(`No renderer for event effect "${e.type}"`);
     }
   }
 }

@@ -57,7 +57,15 @@ const HANDLERS = {
     const fraction = plagueMinFraction + ctx.random() * (plagueMaxFraction - plagueMinFraction);
     const victims = world.creatures.filter(() => ctx.random() < fraction);
     for (const c of victims) c.plague++;
-    ctx.effects.push({ type: "plague", victims, age: 0, duration: plagueDuration });
+    ctx.effects.push({
+      type: "plague",
+      victims,
+      age: 0,
+      duration: plagueDuration,
+      expire() {
+        for (const c of this.victims) c.plague--;
+      },
+    });
     return { text: `Plague! ${plural(victims.length, "creature")} infected`, affected: victims.length };
   },
 
@@ -74,20 +82,45 @@ const HANDLERS = {
   },
 };
 
+// Builds one events instance's handler table from the built-ins plus `extensions`, an array of
+// { type, handler, defaults?, override? }. handler(world, ctx, opts) returns { text, affected };
+// ctx = { random, config, effects }. An effect with an `expire(world)` method has it called when it times out.
+// Extensions are per instance and never touch the module state, so an events object created without them keeps
+// the built-in seeded sequence regardless of what else has been imported.
+function buildHandlers(extensions) {
+  const handlers = { ...HANDLERS };
+  const types = [...EVENT_TYPES];
+  const defaults = {};
+  for (const ext of extensions) {
+    const { type, handler, override = false } = ext ?? {};
+    if (typeof type !== "string" || !type) throw new TypeError("Event extension needs a non-empty string type");
+    if (typeof handler !== "function") throw new TypeError(`Handler for event "${type}" must be a function`);
+    if (Object.hasOwn(handlers, type) && !override) {
+      throw new Error(`Event type "${type}" is already defined; pass override: true to replace it`);
+    }
+    handlers[type] = handler;
+    if (!types.includes(type)) types.push(type);
+    Object.assign(defaults, ext.defaults);
+  }
+  return { handlers, types, defaults };
+}
+
 // Random world events: a seeded scheduler plus the event definitions. No DOM access.
-export function createEvents({ seed, random, config } = {}) {
+export function createEvents({ seed, random, config, extensions = [] } = {}) {
   const rng = random ?? (seed === undefined ? Math.random : mulberry32(seed));
-  const ctx = { random: rng, config: { ...DEFAULTS, ...config }, effects: [] };
-  const state = { effects: ctx.effects, timeToNext: 0 };
+  const { handlers, types, defaults } = buildHandlers(extensions);
+  const ctx = { random: rng, config: { ...DEFAULTS, ...defaults, ...config }, effects: [] };
+  // `types` lists what this instance can fire, and what the random scheduler picks from.
+  const state = { effects: ctx.effects, timeToNext: 0, types: Object.freeze(types) };
 
   function schedule() {
     state.timeToNext = MIN_DELAY + rng() * (MAX_DELAY - MIN_DELAY);
   }
 
   // Fires an event now. `type` defaults to a random one; opts may pin x/y/radius.
-  function trigger(world, type = EVENT_TYPES[Math.floor(rng() * EVENT_TYPES.length)], opts = {}) {
-    if (!EVENT_TYPES.includes(type)) throw new RangeError(`Unknown event type "${type}"`);
-    const result = HANDLERS[type](world, ctx, opts);
+  function trigger(world, type = types[Math.floor(rng() * types.length)], opts = {}) {
+    if (!types.includes(type)) throw new RangeError(`Unknown event type "${type}"`);
+    const result = handlers[type](world, ctx, opts);
     record(world, { kind: "event", type, text: result.text });
     return { type, ...result };
   }
@@ -102,7 +135,7 @@ export function createEvents({ seed, random, config } = {}) {
         for (const c of effect.victims) c.energy -= ctx.config.plagueDrain * dt;
       }
       if (effect.age >= effect.duration) {
-        if (effect.type === "plague") for (const c of effect.victims) c.plague--;
+        effect.expire?.(world);
         ctx.effects.splice(i, 1);
       }
     }
