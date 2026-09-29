@@ -5,6 +5,7 @@ import { renderWorldPage } from "./world-page.js";
 import { renderPixelsPage } from "./pixels-page.js";
 import { renderPollsPage } from "./polls-page.js";
 import { renderBlobsPage } from "./blobs-page.js";
+import { renderPulsePage } from "./pulse-page.js";
 import { layout } from "./layout.js";
 import { handleRequest } from "./site.js";
 import { handleHealth } from "./health.js";
@@ -47,7 +48,7 @@ http
       if (await handleBlobScores(req, res)) return;
       if (await handleBlobs(req, res)) return;
       if (await handlePulse(req, res)) return;
-      await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage, "/polls": renderPollsPage, "/blobs": renderBlobsPage });
+      await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage, "/polls": renderPollsPage, "/blobs": renderBlobsPage, "/pulse": renderPulsePage });
     } catch {
       if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "internal error" }));
