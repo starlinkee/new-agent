@@ -169,6 +169,7 @@ test.describe("pulse plugin cards", () => {
     await expect(page.locator("#pulse-app")).toHaveAttribute("aria-busy", "false");
     await page.evaluate(() => {
       const { ctx } = window.__pulse;
+      document.querySelectorAll("#pulse-grid > .pulse-card").forEach((card) => card.remove());
       ctx.addCard({ name: "c", title: "C", span: "half", order: 30 });
       ctx.addCard({ name: "a", title: "A", span: "half", order: 10 });
       ctx.addCard({ name: "b", title: "B", span: "full", order: 20 });

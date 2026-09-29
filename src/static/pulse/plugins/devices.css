@@ -1,0 +1,94 @@
+.pulse-devices-layout {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+#pulse-devices {
+  flex: none;
+  width: 9.5rem;
+  height: 9.5rem;
+}
+
+.pulse-device-slice {
+  fill: none;
+  stroke-width: 14;
+  transition: opacity 0.15s ease, stroke-width 0.15s ease;
+}
+
+.pulse-devices-layout[data-active] .pulse-device-slice:not(.is-active) {
+  opacity: 0.35;
+}
+
+.pulse-device-slice.is-active {
+  stroke-width: 17;
+}
+
+.pulse-devices-total {
+  fill: var(--pulse-text);
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.pulse-devices-label {
+  fill: var(--pulse-muted);
+  font-size: 8px;
+}
+
+.pulse-devices-legend {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pulse-device {
+  display: grid;
+  grid-template-columns: auto 1fr auto 3rem;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: calc(var(--pulse-radius) / 2);
+  font-size: 0.9rem;
+  transition: background 0.15s ease;
+}
+
+.pulse-device.is-active {
+  background: var(--pulse-accent-soft);
+}
+
+.pulse-device-dot {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: var(--pulse-device-color);
+}
+
+.pulse-device-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.pulse-device-percent {
+  text-align: right;
+  color: var(--pulse-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 599px) {
+  .pulse-devices-layout {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  #pulse-devices {
+    align-self: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-device-slice,
+  .pulse-device {
+    transition: none;
+  }
+}
