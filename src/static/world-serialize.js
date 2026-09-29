@@ -41,12 +41,19 @@ function validate(world, data) {
   if (!isObject(data.config)) throw new Error('Invalid world data: "config" must be an object');
   if (!Array.isArray(data.creatures)) throw new Error('Invalid world data: "creatures" must be an array');
   if (!Array.isArray(data.food)) throw new Error('Invalid world data: "food" must be an array');
+  validateConfig(data.config, world.config);
+  const limit = (key) => data.config[key] ?? world.config[key];
+  if (data.creatures.length > limit("maxCreatures")) throw new Error('Invalid world data: too many creatures');
+  if (data.food.length > limit("maxFood")) throw new Error('Invalid world data: too much food');
+  const species = isObject(world.config.species) ? world.config.species : {};
+  const inWorld = (x, y) => x >= 0 && x <= world.width && y >= 0 && y <= world.height;
   data.creatures.forEach((c, i) => {
     if (!isObject(c)) throw new Error(`Invalid world data: creature ${i} must be an object`);
     for (const key of REQUIRED_CREATURE_NUMBERS) {
       if (!isFiniteNumber(c[key])) throw new Error(`Invalid world data: creature ${i} field "${key}" must be a finite number`);
     }
-    if ("species" in c && (typeof c.species !== "string" || !Object.hasOwn(world.config.species, c.species))) {
+    if (!inWorld(c.x, c.y)) throw new Error(`Invalid world data: creature ${i} is outside the world`);
+    if ("species" in c && (typeof c.species !== "string" || !Object.hasOwn(species, c.species))) {
       throw new Error(`Invalid world data: creature ${i} has unknown species`);
     }
   });
@@ -54,8 +61,8 @@ function validate(world, data) {
     if (!isObject(f) || !isFiniteNumber(f.x) || !isFiniteNumber(f.y)) {
       throw new Error(`Invalid world data: food ${i} needs numeric x and y`);
     }
+    if (!inWorld(f.x, f.y)) throw new Error(`Invalid world data: food ${i} is outside the world`);
   });
-  validateConfig(data.config, world.config);
   const ids = new Set();
   let maxId = -Infinity;
   data.creatures.forEach((c, i) => {
@@ -79,7 +86,8 @@ function validateLike(value, live, path) {
   } else if (typeof value === "string") {
     if (!SAFE_STRING.test(value)) throw new Error(`Invalid world data: config "${path}" has unsafe characters`);
   } else if (Array.isArray(value)) {
-    value.forEach((item, i) => validateLike(item, live[0] ?? item, `${path}[${i}]`));
+    if (value.length > 0 && live.length === 0) throw new Error(`Invalid world data: config "${path}" must be empty`);
+    value.forEach((item, i) => validateLike(item, live[0], `${path}[${i}]`));
   } else if (isObject(value)) {
     for (const [key, inner] of Object.entries(value)) {
       if (!Object.hasOwn(live, key)) throw new Error(`Invalid world data: unknown config "${path}.${key}"`);

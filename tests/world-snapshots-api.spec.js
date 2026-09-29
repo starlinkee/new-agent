@@ -20,6 +20,11 @@ test.describe("world snapshots API", () => {
     }
   });
 
+  test("null data is rejected without a server error", async ({ request }) => {
+    const res = await request.post(URL, { data: { name: "null data", data: null } });
+    expect(res.status()).toBe(400);
+  });
+
   test("create/list/get/delete round trip", async ({ request }) => {
     const data = { tick: 7, nested: { a: [1, "b", null] } };
     const created = await save(request, "  first save  ", data);

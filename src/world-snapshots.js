@@ -7,7 +7,8 @@ export const MAX_NAME_LENGTH = 60;
 const MAX_BODY_BYTES = MAX_SNAPSHOT_BYTES + 4 * 1024;
 
 // Summary shown in list views, computed once at save time so listing never needs the blobs.
-function summarize(data) {
+function summarize(value) {
+  const data = value !== null && typeof value === "object" ? value : {};
   return {
     time: Number.isFinite(data.time) ? data.time : 0,
     creatureCount: Array.isArray(data.creatures) ? data.creatures.length : 0,
