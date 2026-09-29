@@ -7,8 +7,9 @@
 import * as leaderboard from "./leaderboard.js";
 import * as scores from "./scores.js";
 import * as feed from "./feed.js";
+import * as minimap from "./minimap.js";
 
-export const PLUGINS = [leaderboard, scores, feed];
+export const PLUGINS = [leaderboard, scores, feed, minimap];
 
 // One failing plugin must not stop the page; returns a function that unmounts the plugins that started.
 export function mountPlugins(ctx) {
