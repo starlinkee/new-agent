@@ -5,8 +5,9 @@
 
 import * as install from "./install.js";
 import * as devices from "./devices.js";
+import * as sources from "./sources.js";
 
-export const PLUGINS = [install, devices];
+export const PLUGINS = [install, devices, sources];
 
 // One failing plugin must not stop the page; returns a function that unmounts the plugins that started.
 export function mountPlugins(ctx, plugins = PLUGINS) {

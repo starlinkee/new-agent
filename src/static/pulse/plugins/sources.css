@@ -1,0 +1,42 @@
+.pulse-sources-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0 0.6rem 0.4rem;
+  color: var(--pulse-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pulse-sources-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.pulse-sources-list .pulse-row-key {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+}
+
+.pulse-sources-list .pulse-row-value {
+  flex: none;
+  color: var(--pulse-muted);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.pulse-sources-list .pulse-bar-row::before {
+  transition: width 0.3s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse-sources-list .pulse-bar-row::before {
+    transition: none;
+  }
+}
