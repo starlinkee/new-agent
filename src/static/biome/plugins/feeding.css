@@ -1,0 +1,4 @@
+[data-plugin="feeding"] { position: absolute; left: 50%; bottom: 0.75rem; transform: translateX(-50%); }
+#biome-feed { display: flex; flex-direction: column; gap: 0.3rem; min-width: 14rem; padding: 0.4rem 0.7rem; background: rgba(255, 255, 255, 0.85); border-radius: 6px; font-size: 0.9rem; text-align: center; }
+.biome-feed-bar { height: 6px; background: rgba(0, 0, 0, 0.15); border-radius: 3px; overflow: hidden; }
+.biome-feed-fill { height: 100%; width: 100%; background: #22aa44; }
