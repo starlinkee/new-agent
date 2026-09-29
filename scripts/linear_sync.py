@@ -17,6 +17,8 @@ In Review:
         finished without fixing it; at most MAX_DOCTOR attempts, then Backlog
     verdict APPROVED, PR mergeable -> squash-merge it, ticket Done (AUTO_MERGE=0 disables)
     no verdict for the current head commit yet -> wait
+  Todo ticket the reconciler sent there for a rework that Contrabass never started (no run
+    for TODO_STALE_MIN) and whose PR conflicts or was REJECTED -> Merge Doctor as well
   no PR, ticket Done > GRACE min -> Todo (redo), at most MAX_REDO times, then Backlog
   PR closed unmerged             -> Todo (redo), same cap
 
@@ -276,7 +278,8 @@ def doctor_running(pr_title):
 
 
 def call_doctor(issue, info, states, memory, dry):
-    """Conflicting PR: let the Merge Doctor (Opus, in GitHub Actions) fix it.
+    """Conflicting PR (or a rejected one whose rework worker never started): let the
+    Merge Doctor (Opus, in GitHub Actions) fix it; it also addresses the jury's findings.
 
     The workflow starts on the `labeled` event, so a retry has to remove and re-add the
     label. Retries start as soon as the previous run has finished without fixing the
@@ -286,7 +289,7 @@ def call_doctor(issue, info, states, memory, dry):
     key = "doctor:" + ident
     rec = memory.get(key) or {"n": 0, "at": 0}
     if cur != "In Review":
-        set_state(issue, "In Review", states, dry, f"PR #{num} conflicts, Merge Doctor is on it")
+        set_state(issue, "In Review", states, dry, f"PR #{num} conflicts or was rejected, Merge Doctor is on it")
     since = time.time() - rec["at"]
     if since < DOCTOR_START_MIN * 60:
         return  # label just added; the run is not listed yet
@@ -294,10 +297,10 @@ def call_doctor(issue, info, states, memory, dry):
         return
     if rec["n"] >= MAX_DOCTOR:
         set_state(issue, "Backlog", states, dry,
-                  f"PR #{num}: merge conflicts, Merge Doctor failed {rec['n']} times - needs a human")
+                  f"PR #{num}: conflicts/jury rejection, Merge Doctor failed {rec['n']} times - needs a human")
         memory.pop(key, None)
         return
-    log(f"{ident}: PR #{num} still conflicts, calling Merge Doctor (attempt {rec['n'] + 1})")
+    log(f"{ident}: PR #{num} needs the Merge Doctor (attempt {rec['n'] + 1})")
     memory[key] = {"n": rec["n"] + 1, "at": time.time()}
     if not dry:
         # gh issue edit, not gh pr edit: the latter fails on the Projects (classic) deprecation
@@ -440,7 +443,8 @@ def reconcile(dry):
                 set_state(issue, "Done", states, dry, "PR merged")
         elif pr == "open":
             if cur == "Todo":
-                if info["mergeable"] == "CONFLICTING":
+                # The rework worker never started (or was parked by Contrabass): Opus does it.
+                if info["mergeable"] == "CONFLICTING" or info["verdict"] == "REJECTED":
                     call_doctor(issue, info, states, memory, dry)
                 continue
             handle_open_pr(issue, info, states, memory, dry)

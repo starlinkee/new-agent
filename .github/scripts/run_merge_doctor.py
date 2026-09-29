@@ -6,10 +6,12 @@ from claude_cli import run_claude_agent
 
 # Runs in a checkout of the PR branch (the scripts themselves come from the base
 # branch, see merge-doctor.yml). Fires when the PR is labeled "needs-expert-review":
-# by the worker when it could not rebase, or by the reconciler when the PR conflicts.
+# by the worker when it could not rebase, or by the reconciler when the PR conflicts
+# or was rejected by the jury and no rework worker picked it up.
 #
-# Opus rebases the branch onto the base branch, resolves the conflicts and fixes
-# whatever breaks. This script then re-checks the result itself (on top of base,
+# Opus rebases the branch onto the base branch, resolves the conflicts, fixes
+# whatever breaks and addresses the jury's blocking findings, if the last verdict is a
+# rejection. This script then re-checks the result itself (on top of base,
 # no conflict markers, test suite green) and only then pushes with
 # --force-with-lease. The agent never gets push credentials. The jury reviews the
 # new head and the reconciler merges the PR once it is approved.
@@ -40,6 +42,15 @@ run("git", "fetch", "origin", BASE)
 original_head = run("git", "rev-parse", "HEAD").stdout.strip()
 pr_body = run("gh", "pr", "view", PR, "--json", "body", "--jq", ".body").stdout
 
+def jury_findings():
+    """Body of the newest jury comment if it is a rejection, else empty."""
+    comments = run("gh", "api", f"repos/{REPO}/issues/{PR}/comments?per_page=100",
+                   "--jq", '[.[] | select(.user.login | startswith("github-actions")) '
+                   '| select(.body | test("STATUS: *(APPROVED|REJECTED)"))] | last | .body // ""').stdout
+    return comments if "REJECTED" in comments[:200] else ""
+
+
+findings = jury_findings()
 conflicted = run("git", "rebase", f"origin/{BASE}", check=False).returncode != 0
 
 system_prompt = f"""
@@ -60,6 +71,9 @@ Rules:
 - Then run `npm run test:ai` (node_modules is already installed). Read the output.
   If something fails, fix the cause (usually an interaction between the PR and new
   code on {BASE}) and re-run until everything passes.
+- If the AI jury's rejection is given below, also fix every BLOCKING finding in it
+  (minimal change, plus a test for the fixed behavior) and commit the fix. Non-blocking
+  remarks are optional.
 - Never run `git push`, never rewrite {BASE}, never use `git merge`.
 - Finish with a short plain-text summary: what conflicted, how you resolved it,
   and the final test result.
@@ -73,7 +87,8 @@ state = (
 try:
     summary = run_claude_agent(
         system_prompt,
-        f"{state}\nThe worker agent's own account of what it tried:\n\n{pr_body}",
+        f"{state}\nThe worker agent's own account of what it tried:\n\n{pr_body}"
+        + (f"\n\nThe AI jury's latest verdict on this PR (a rejection):\n\n{findings}" if findings else ""),
         ["Bash(git *)", "Bash(npm *)", "Bash(npx *)", "Bash(node *)",
          "Read", "Edit", "Write", "Glob", "Grep"],
     )
