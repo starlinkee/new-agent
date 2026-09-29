@@ -115,7 +115,11 @@ test("/world boots with 20 herbivores and 3 predators", async ({ page }) => {
   await page.goto("/world");
   await page.waitForFunction(() => window.__world);
   const counts = await page.evaluate(async () => {
+    // The page keeps simulating during the import (a predator can split or eat before we count),
+    // so pause and reset to the starting population the page was built with.
+    window.__worldControl.paused = true;
     const sim = await import("/static/world-sim.js");
+    sim.resetWorld(window.__world);
     return sim.countBySpecies(window.__world);
   });
   expect(counts).toEqual({ herbivore: 20, predator: 3 });
