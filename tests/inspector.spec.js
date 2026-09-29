@@ -21,7 +21,7 @@ test("clicking a creature shows its details, empty space clears, death is report
   await expect(panel.locator("[data-field=energy]")).toContainText("60.0");
   expect(await page.evaluate(() => window.__world.selectedId === window.__probe.id)).toBe(true);
 
-  await page.mouse.click(box.x + 600, box.y + 400);
+  await page.mouse.click(box.x + box.width - 40, box.y + box.height - 40);
   await expect(panel.locator("[data-field=species]")).toBeHidden();
   await expect(panel.locator("#inspector-content p")).toHaveText("Click a creature to inspect it.");
   expect(await page.evaluate(() => window.__world.selectedId)).toBeNull();
