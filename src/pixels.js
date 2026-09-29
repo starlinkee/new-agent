@@ -1,4 +1,5 @@
 import { HttpError, readJson, send } from "./http.js";
+import { PaintRateLimiter, clientCookie, newClientId, readClientId } from "./pixels-ratelimit.js";
 
 export const BOARD_WIDTH = 64;
 export const BOARD_HEIGHT = 64;
@@ -95,7 +96,7 @@ function requireInteger(value, name, max) {
   return value;
 }
 
-async function route(store, req, res, url) {
+async function route(store, limiter, clientId, req, res, url) {
   const read = req.method === "GET" || req.method === "HEAD";
   if (url.pathname === "/api/pixels/at") {
     if (!read) throw new HttpError(405, "method not allowed", { allow: "GET, HEAD" });
@@ -112,6 +113,14 @@ async function route(store, req, res, url) {
     );
   }
   if (req.method === "POST") {
+    const grant = limiter.take(clientId);
+    if (!grant.allowed) {
+      throw new HttpError(429, "too many paints, slow down", {
+        "retry-after": String(Math.ceil(grant.retryAfterMs / 1000)),
+        "x-ratelimit-remaining": "0",
+      }, { retryAfterMs: grant.retryAfterMs });
+    }
+    res.setHeader("x-ratelimit-remaining", String(grant.remaining));
     const body = await readJson(req, { maxBytes: MAX_PIXEL_BODY_BYTES });
     const x = requireInteger(body.x, "x", BOARD_WIDTH);
     const y = requireInteger(body.y, "y", BOARD_HEIGHT);
@@ -122,7 +131,9 @@ async function route(store, req, res, url) {
 }
 
 // Returns a handler for /api/pixels requests: resolves true when the request was handled.
-export function createPixelHandler(store = pixelStore) {
+// Options: burst / refillMs configure the per-client paint bucket (default 10 paints, +1 per 2s).
+export function createPixelHandler(store = pixelStore, { burst, refillMs, now } = {}) {
+  const limiter = new PaintRateLimiter({ burst, refillMs, now });
   return async function handlePixels(req, res) {
     let url;
     try {
@@ -132,12 +143,17 @@ export function createPixelHandler(store = pixelStore) {
     }
     if (!/^\/api\/pixels(?:\/at)?\/?$/.test(url.pathname)) return false;
     if (url.pathname.endsWith("/")) url.pathname = url.pathname.slice(0, -1);
+    let clientId = readClientId(req);
+    if (!clientId) {
+      clientId = newClientId();
+      res.setHeader("set-cookie", clientCookie(clientId));
+    }
     try {
-      await route(store, req, res, url);
+      await route(store, limiter, clientId, req, res, url);
     } catch (err) {
       if (!(err instanceof HttpError)) throw err;
       if (res.headersSent) return true;
-      send(res, err.status, { error: err.message }, err.headers);
+      send(res, err.status, { error: err.message, ...err.extra }, err.headers);
       if (err.status === 413) res.once("finish", () => req.destroy());
     }
     return true;

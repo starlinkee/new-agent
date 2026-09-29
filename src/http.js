@@ -3,10 +3,11 @@
 export const DEFAULT_MAX_BODY_BYTES = 16 * 1024;
 
 export class HttpError extends Error {
-  constructor(status, message, headers = {}) {
+  constructor(status, message, headers = {}, extra = {}) {
     super(message);
     this.status = status;
     this.headers = headers;
+    this.extra = extra;
   }
 }
 

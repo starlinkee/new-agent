@@ -45,3 +45,10 @@
 #pixels-status.error {
   color: #c62828;
 }
+#pixels-cooldown {
+  font-variant-numeric: tabular-nums;
+}
+#pixels-cooldown[data-state="waiting"] {
+  color: #c62828;
+  font-weight: 600;
+}
