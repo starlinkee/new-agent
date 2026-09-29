@@ -45,7 +45,7 @@ export function record(world, entry) {
   if (world.log.length > LOG_LIMIT) world.log.shift();
 }
 
-function clamp(v, lo, hi) {
+export function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
 
@@ -114,6 +114,8 @@ export function createWorld({ width = 800, height = 600, count = CREATURE_COUNT,
     random: rng,
     config: { ...DEFAULT_CONFIG, ...config },
     systems: [...systems],
+    managedSpecies: new Set(),
+    resetHandlers: [],
     creatures: [],
     food: [],
     foodBudget: 0,
@@ -132,6 +134,23 @@ export function createWorld({ width = 800, height = 600, count = CREATURE_COUNT,
 export function registerSystem(world, fn) {
   world.systems.push(fn);
   return fn;
+}
+
+// Marks a species as driven by its own registered system, so step() leaves those creatures alone.
+export function manageSpecies(world, species) {
+  world.managedSpecies.add(species);
+}
+
+// fn(world) runs at the end of resetWorld, so a species can respawn its founders.
+export function onReset(world, fn) {
+  world.resetHandlers.push(fn);
+  return fn;
+}
+
+// Counts a birth from a system-driven species and logs it with its species.
+export function recordBirth(world, child) {
+  world.births++;
+  record(world, { kind: "birth", id: child.id, generation: child.generation, species: child.species });
 }
 
 export function countBySpecies(world) {
@@ -153,6 +172,7 @@ export function resetWorld(world, count = CREATURE_COUNT) {
   world.respawns = 0;
   world.log = [];
   for (let i = 0; i < count; i++) addCreature(world);
+  for (const handler of world.resetHandlers) handler(world);
 }
 
 export function resizeWorld(world, width, height) {
@@ -168,7 +188,7 @@ export function resizeWorld(world, width, height) {
   }
 }
 
-function wrap(v, size) {
+export function wrap(v, size) {
   if (v < 0) return v + size;
   if (v > size) return v - size;
   return v;
@@ -276,8 +296,8 @@ export function step(world, dt) {
   const born = [];
   const survivors = [];
   for (const c of world.creatures) {
-    // Other species run their own logic in a registered system.
-    if (c.species !== "herbivore") {
+    // Species that registered their own system (manageSpecies) are advanced there, not here.
+    if (world.managedSpecies.has(c.species)) {
       survivors.push(c);
       continue;
     }
@@ -306,4 +326,7 @@ export function step(world, dt) {
   }
 
   for (const system of world.systems) system(world, dt);
+
+  // Systems flag deaths with kill(); the engine owns compaction of the creature list.
+  if (world.creatures.some((c) => c.dead)) world.creatures = world.creatures.filter((c) => !c.dead);
 }

@@ -1,4 +1,15 @@
-import { addCreature, creatureRadius, delta, kill, record, registerSystem } from "/static/world-sim.js";
+import {
+  addCreature,
+  clamp,
+  creatureRadius,
+  delta,
+  kill,
+  manageSpecies,
+  onReset,
+  recordBirth,
+  registerSystem,
+  wrap,
+} from "/static/world-sim.js";
 
 const TAU = Math.PI * 2;
 
@@ -18,22 +29,8 @@ export const PREDATOR_DEFAULTS = {
   speedMutation: 0.12,
 };
 
-function tuning(world) {
-  return { ...PREDATOR_DEFAULTS, ...world.config.species.predator };
-}
-
-function clamp(v, lo, hi) {
-  return Math.max(lo, Math.min(hi, v));
-}
-
-function wrap(v, size) {
-  if (v < 0) return v + size;
-  if (v > size) return v - size;
-  return v;
-}
-
 export function addPredator(world, props = {}) {
-  const t = tuning(world);
+  const t = world.config.species.predator ?? PREDATOR_DEFAULTS;
   return addCreature(world, {
     species: "predator",
     hue: 0,
@@ -43,30 +40,45 @@ export function addPredator(world, props = {}) {
   });
 }
 
-function nearestHerbivore(world, predator, vision) {
+// Fills `out` with the living herbivores, reusing the array between ticks.
+function collectPrey(world, out) {
+  out.length = 0;
+  const creatures = world.creatures;
+  for (let i = 0, n = creatures.length; i < n; i++) {
+    const c = creatures[i];
+    if (c.species === "herbivore" && !c.dead) out.push(c);
+  }
+}
+
+// Nearest living herbivore within `vision`, or null. Distance is one pass over the herbivores, so a tick costs at
+// most maxPredators x maxCreatures checks.
+function nearestPrey(world, predator, prey, vision) {
   let best = null;
   let bestDist = vision * vision;
-  for (const c of world.creatures) {
-    if (c.dead || c.species !== "herbivore") continue;
+  for (let i = 0, n = prey.length; i < n; i++) {
+    const c = prey[i];
+    if (c.dead) continue;
     const dx = delta(predator.x, c.x, world.width);
     const dy = delta(predator.y, c.y, world.height);
     const d = dx * dx + dy * dy;
     if (d < bestDist) {
-      best = { prey: c, dx, dy };
+      best = c;
       bestDist = d;
     }
   }
   return best;
 }
 
-function steer(world, predator, target, t, dt) {
-  if (!target) {
+function steer(world, predator, prey, t, dt) {
+  if (!prey) {
     predator.turnRate += (world.random() - 0.5) * 2 * dt;
     predator.turnRate = clamp(predator.turnRate, -1.5, 1.5);
     predator.heading = (predator.heading + predator.turnRate * dt) % TAU;
     return;
   }
-  let diff = (Math.atan2(target.dy, target.dx) - predator.heading) % TAU;
+  const dx = delta(predator.x, prey.x, world.width);
+  const dy = delta(predator.y, prey.y, world.height);
+  let diff = (Math.atan2(dy, dx) - predator.heading) % TAU;
   if (diff > Math.PI) diff -= TAU;
   else if (diff < -Math.PI) diff += TAU;
   const maxTurn = t.steerRate * dt;
@@ -80,9 +92,9 @@ function contact(world, predator, prey) {
   return dx * dx + dy * dy <= reach * reach;
 }
 
+// The parent only pays once the child exists, so a full world costs it nothing.
 function splitPredator(world, parent, t) {
   const share = (parent.energy - t.splitCost) / 2;
-  parent.energy = share;
   const speed = clamp(parent.speed * (1 + (world.random() * 2 - 1) * t.speedMutation), t.minSpeed, t.maxSpeed);
   const child = addCreature(world, {
     species: "predator",
@@ -95,32 +107,41 @@ function splitPredator(world, parent, t) {
     speed,
   });
   if (!child) return null;
-  world.births++;
-  record(world, { kind: "birth", id: child.id, generation: child.generation, species: "predator" });
+  parent.energy = share;
+  recordBirth(world, child);
   return child;
 }
 
-export function predatorSystem(world, dt) {
-  const t = tuning(world);
-  const { speedDrain, maxEnergy } = world.config;
-  let count = world.creatures.filter((c) => c.species === "predator").length;
+const preyBuffer = [];
 
-  for (const p of [...world.creatures]) {
+export function predatorSystem(world, dt) {
+  const t = world.config.species.predator;
+  const { speedDrain, maxEnergy } = world.config;
+  collectPrey(world, preyBuffer);
+  let count = 0;
+  for (let i = 0, n = world.creatures.length; i < n; i++) {
+    const c = world.creatures[i];
+    if (c.species === "predator" && !c.dead) count++;
+  }
+
+  // Newborns are appended past `n`, so they first act on the next tick.
+  for (let i = 0, n = world.creatures.length; i < n; i++) {
+    const p = world.creatures[i];
     if (p.species !== "predator" || p.dead) continue;
-    const target = nearestHerbivore(world, p, t.predatorVision);
-    steer(world, p, target, t, dt);
+    const prey = nearestPrey(world, p, preyBuffer, t.predatorVision);
+    steer(world, p, prey, t, dt);
     p.x = wrap(p.x + Math.cos(p.heading) * p.speed * dt, world.width);
     p.y = wrap(p.y + Math.sin(p.heading) * p.speed * dt, world.height);
     p.age += dt;
     p.energy -= (t.baseDrain + speedDrain * p.speed * p.speed) * dt;
+    if (prey && !prey.dead && contact(world, p, prey)) {
+      kill(world, prey, "eaten");
+      p.energy = Math.min(maxEnergy, p.energy + t.predatorEnergyGain);
+    }
     if (p.energy <= 0) {
       kill(world, p, "starved");
       count--;
       continue;
-    }
-    if (target && contact(world, p, target.prey)) {
-      kill(world, target.prey, "eaten");
-      p.energy = Math.min(maxEnergy, p.energy + t.predatorEnergyGain);
     }
     p.radius = creatureRadius(world, p);
     if (p.energy >= t.splitThreshold && count < t.maxPredators && splitPredator(world, p, t)) {
@@ -128,22 +149,25 @@ export function predatorSystem(world, dt) {
       p.radius = creatureRadius(world, p);
     }
   }
-  world.creatures = world.creatures.filter((c) => !c.dead);
 }
 
-export function enablePredators(world, opts = {}) {
-  const { initial, ...overrides } = opts;
-  // Replace rather than mutate: config.species may be the object shared with DEFAULT_CONFIG.
-  const predator = { ...PREDATOR_DEFAULTS, ...world.config.species.predator, ...overrides };
-  if (initial !== undefined) predator.initial = initial;
-  world.config.species = { ...world.config.species, predator };
-  registerSystem(world, predatorSystem);
-  for (let i = 0; i < predator.initial; i++) {
-    if (count(world) >= predator.maxPredators) break;
-    addPredator(world);
+function spawnFounders(world) {
+  const t = world.config.species.predator;
+  let count = 0;
+  for (const c of world.creatures) if (c.species === "predator") count++;
+  for (; count < Math.min(t.initial, t.maxPredators); count++) {
+    if (!addPredator(world)) break;
   }
 }
 
-function count(world) {
-  return world.creatures.filter((c) => c.species === "predator").length;
+// Idempotent: a second call only updates the tuning, and never registers the system twice.
+export function enablePredators(world, opts = {}) {
+  // Replace rather than mutate: config.species may be the object shared with DEFAULT_CONFIG.
+  const predator = { ...PREDATOR_DEFAULTS, ...world.config.species.predator, ...opts };
+  world.config.species = { ...world.config.species, predator };
+  if (world.systems.includes(predatorSystem)) return;
+  manageSpecies(world, "predator");
+  registerSystem(world, predatorSystem);
+  onReset(world, spawnFounders);
+  spawnFounders(world);
 }

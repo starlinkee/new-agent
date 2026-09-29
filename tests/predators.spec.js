@@ -111,10 +111,88 @@ test("herbivores still eat food and split as before with predators enabled", asy
   expect(r.herbivores).toBe(3);
 });
 
-test("/world spawns three predators", async ({ page }) => {
+test("/world boots with 20 herbivores and 3 predators", async ({ page }) => {
   await page.goto("/world");
   await page.waitForFunction(() => window.__world);
-  const n = await page.evaluate(() => window.__world.creatures.filter((c) => c.species === "predator").length);
-  expect(n).toBeGreaterThan(0);
-  expect(n).toBeLessThanOrEqual(15);
+  const counts = await page.evaluate(async () => {
+    const sim = await import("/static/world-sim.js");
+    return sim.countBySpecies(window.__world);
+  });
+  expect(counts).toEqual({ herbivore: 20, predator: 3 });
+});
+
+test("two predators on one prey kill and log it once and gain energy once", async ({ page }) => {
+  const r = await inPage(page, async () => {
+    const sim = await import("/static/world-sim.js");
+    const pred = await import("/static/predators.js");
+    const world = sim.createWorld({ seed: 3, count: 0, config: { foodSpawnRate: 0, respawn: false } });
+    pred.enablePredators(world, { initial: 0 });
+    const prey = sim.addCreature(world, { x: 200, y: 200, heading: 0, speed: 0, energy: 50 });
+    const a = pred.addPredator(world, { x: 195, y: 200, heading: 0, energy: 40 });
+    const b = pred.addPredator(world, { x: 205, y: 200, heading: Math.PI, energy: 40 });
+    sim.step(world, 1 / 30);
+    return {
+      deaths: world.deaths,
+      logged: world.log.filter((e) => e.kind === "death" && e.id === prey.id).length,
+      fed: [a, b].filter((p) => p.energy > 40).length,
+    };
+  });
+  expect(r).toEqual({ deaths: 1, logged: 1, fed: 1 });
+});
+
+test("a predator at maxCreatures keeps its energy when the split fails", async ({ page }) => {
+  const r = await inPage(page, async () => {
+    const sim = await import("/static/world-sim.js");
+    const pred = await import("/static/predators.js");
+    const world = sim.createWorld({ seed: 5, count: 0, config: { foodSpawnRate: 0, respawn: false, maxCreatures: 1 } });
+    pred.enablePredators(world, { initial: 0, baseDrain: 0 });
+    const parent = pred.addPredator(world, { energy: 95, speed: 0 });
+    sim.step(world, 1 / 30);
+    return { energy: parent.energy, creatures: world.creatures.length, births: world.births };
+  });
+  expect(r).toEqual({ energy: 95, creatures: 1, births: 0 });
+});
+
+test("a predator that reaches prey on its last energy eats instead of starving", async ({ page }) => {
+  const r = await inPage(page, async () => {
+    const sim = await import("/static/world-sim.js");
+    const pred = await import("/static/predators.js");
+    const world = sim.createWorld({ seed: 3, count: 0, config: { foodSpawnRate: 0, respawn: false } });
+    pred.enablePredators(world, { initial: 0 });
+    const prey = sim.addCreature(world, { x: 200, y: 200, speed: 0, energy: 50 });
+    const hunter = pred.addPredator(world, { x: 200, y: 200, heading: 0, energy: 0.01 });
+    sim.step(world, 1 / 30);
+    return { preyDead: prey.dead, hunterDead: hunter.dead };
+  });
+  expect(r).toEqual({ preyDead: true, hunterDead: false });
+});
+
+test("enablePredators is idempotent and reset restores the founders", async ({ page }) => {
+  const r = await inPage(page, async () => {
+    const sim = await import("/static/world-sim.js");
+    const pred = await import("/static/predators.js");
+    const world = sim.createWorld({ seed: 3, config: { foodSpawnRate: 0, respawn: false } });
+    pred.enablePredators(world);
+    pred.enablePredators(world);
+    const systems = world.systems.length;
+    const first = sim.countBySpecies(world);
+    sim.resetWorld(world);
+    return { systems, first, afterReset: sim.countBySpecies(world) };
+  });
+  expect(r.systems).toBe(1);
+  expect(r.first).toEqual({ herbivore: 20, predator: 3 });
+  expect(r.afterReset).toEqual({ herbivore: 20, predator: 3 });
+});
+
+test("a creature with an unknown species is still simulated by the core", async ({ page }) => {
+  const r = await inPage(page, async () => {
+    const sim = await import("/static/world-sim.js");
+    const pred = await import("/static/predators.js");
+    const world = sim.createWorld({ seed: 3, count: 0, config: { foodSpawnRate: 0, respawn: false } });
+    pred.enablePredators(world, { initial: 0 });
+    const odd = sim.addCreature(world, { species: "mystery", x: 100, y: 100, heading: 0, speed: 30, energy: 5 });
+    for (let i = 0; i < 300; i++) sim.step(world, 1 / 30);
+    return { dead: odd.dead, left: world.creatures.length };
+  });
+  expect(r).toEqual({ dead: true, left: 0 });
 });
