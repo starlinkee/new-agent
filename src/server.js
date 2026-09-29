@@ -8,6 +8,7 @@ import { handleRequest } from "./site.js";
 import { handleHealth } from "./health.js";
 import { handleSnapshots } from "./world-snapshots.js";
 import { handlePixels } from "./pixels.js";
+import { handlePixelStream } from "./pixels-stream.js";
 
 export function renderPage() {
   return layout({
@@ -24,6 +25,7 @@ http
       if (new URL(req.url, "http://localhost").pathname === "/health") return handleHealth(req, res);
       if (await handleTodos(req, res)) return;
       if (await handleSnapshots(req, res)) return;
+      if (await handlePixelStream(req, res)) return;
       if (await handlePixels(req, res)) return;
       await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage });
     } catch {
