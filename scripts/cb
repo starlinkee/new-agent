@@ -9,6 +9,7 @@
 #                their unpushed work. Add --force to override.
 #   cb status    show sessions and the TUI header
 #   cb app-log   output of the app runner (scripts/app_sync.sh, http://localhost:3000)
+#   cb tunnel-log  output of the Cloudflare Tunnel publishing the pages (scripts/tunnel.yml)
 #   cb sync-log  last lines of the Linear reconciler (scripts/linear_sync.py)
 #   cb sync-restart  restart only the reconciler (safe while agents run)
 #   cb agents    list agent sessions; "cb agents <session>" attaches to one
@@ -26,6 +27,7 @@ PW_LIBS="$HOME/.local/playwright-libs/usr/lib/x86_64-linux-gnu"
 [ -d "$PW_LIBS" ] && export LD_LIBRARY_PATH="$PW_LIBS${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 SYNC=linearsync
 APP=app  # scripts/app_sync.sh: runs master at localhost:3000 and follows merges
+TUNNEL=tunnel  # cloudflared: https://<page>.viktorbobinski.com -> the app (scripts/tunnel.yml)
 
 # ~/.bashrc is not read by non-interactive shells, so load the key explicitly.
 if [ -z "${LINEAR_API_KEY:-}" ] && [ -f "$HOME/.bashrc" ]; then
@@ -73,12 +75,17 @@ start() {
   if ! tmux has-session -t "=$APP" 2>/dev/null; then
     setsid nohup tmux new-session -d -s "$APP" "bash scripts/app_sync.sh; echo 'app_sync exited'; sleep 600" >/dev/null 2>&1 </dev/null
   fi
+  # Only on a machine that holds the tunnel's credentials (see scripts/tunnel.yml).
+  if command -v cloudflared >/dev/null && [ -f "$HOME/.cloudflared/cert.pem" ] && ! tmux has-session -t "=$TUNNEL" 2>/dev/null; then
+    setsid nohup tmux new-session -d -s "$TUNNEL" \
+      "cloudflared tunnel --no-autoupdate --config scripts/tunnel.yml run; echo 'cloudflared exited'; sleep 600" >/dev/null 2>&1 </dev/null
+  fi
   sleep 3
   running && echo "started (cb attach to view; cb sync-log for the Linear reconciler)" || { echo "failed to start"; exit 1; }
 }
 
 stop() {
-  for s in $(tmux ls -F '#S' 2>/dev/null | grep -E "^($SESSION|$SYNC|$APP)$|^omc-team-" || true); do
+  for s in $(tmux ls -F '#S' 2>/dev/null | grep -E "^($SESSION|$SYNC|$APP|$TUNNEL)$|^omc-team-" || true); do
     tmux kill-session -t "$s"
   done
   echo "stopped"
@@ -102,6 +109,7 @@ case "${1:-}" in
       echo "!! reconciler: NO successful round for 10+ min - see 'cb sync-log'"
     fi ;;
   app-log) tmux capture-pane -p -t "=$APP:" -S -200 | grep -v '^\s*$' | tail -"${2:-30}" ;;
+  tunnel-log) tmux capture-pane -p -t "=$TUNNEL:" -S -200 | grep -v '^\s*$' | tail -"${2:-30}" ;;
   sync-restart)
     [ -n "${LINEAR_API_KEY:-}" ] || { echo "LINEAR_API_KEY is not set (add it to ~/.bashrc)"; exit 1; }
     tmux kill-session -t "=$SYNC" 2>/dev/null || true
@@ -124,5 +132,5 @@ case "${1:-}" in
     rm -rf .contrabass/state
     echo "clean" ;;
   ""|run)  start; exec tmux attach -t "$SESSION" ;;
-  *) sed -n 2,18p "$0"; exit 1 ;;
+  *) sed -n 2,19p "$0"; exit 1 ;;
 esac

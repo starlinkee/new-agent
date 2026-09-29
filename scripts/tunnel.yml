@@ -1,0 +1,31 @@
+# Cloudflare Tunnel "pulse": publishes every page of the app (localhost:3000) on its own
+# subdomain of viktorbobinski.com. Each host answers only its page ("/" serves it, see
+# src/hosts.js), its /api/<name>/ routes and the shared read-only /static/ files; any other
+# path answers 404, so e.g. the todos API is not reachable through pixels.viktorbobinski.com.
+# New hostnames also need a DNS record: `cloudflared tunnel route dns pulse <hostname>`.
+# Started by `cb` (tmux session "tunnel"); `cb tunnel-log` shows its output.
+# Credentials are read from ~/.cloudflared/<tunnel id>.json (created by `cloudflared tunnel create`).
+tunnel: 99a2aa19-ba08-44cb-adc1-e444eed7c02c
+ingress:
+  - hostname: home.viktorbobinski.com
+    path: ^/(static/.*)?$
+    service: http://localhost:3000
+  - hostname: todos.viktorbobinski.com
+    path: ^/(todos|static/.*|api/todos(/.*)?)?$
+    service: http://localhost:3000
+  - hostname: world.viktorbobinski.com
+    path: ^/(world|static/.*|api/world/.*)?$
+    service: http://localhost:3000
+  - hostname: pixels.viktorbobinski.com
+    path: ^/(pixels|static/.*|api/pixels(/.*)?)?$
+    service: http://localhost:3000
+  - hostname: polls.viktorbobinski.com
+    path: ^/(polls|static/.*|api/polls(/.*)?)?$
+    service: http://localhost:3000
+  - hostname: blobs.viktorbobinski.com
+    path: ^/(blobs|static/.*|api/blobs/.*)?$
+    service: http://localhost:3000
+  - hostname: pulse.viktorbobinski.com
+    path: ^/(pulse/?|static/.*|api/pulse/.*)?$
+    service: http://localhost:3000
+  - service: http_status:404
