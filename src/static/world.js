@@ -16,6 +16,12 @@ const events = createEvents();
 const ticker = createTicker(document.getElementById("ticker"));
 const stats = createStats();
 const control = { paused: false, speed: 1 };
+// Panels push fn(ctx2d) here to draw on top of the world each frame.
+const overlays = [];
+// Which creature the inspector follows; view state, kept out of the sim world.
+const selection = { id: null };
+window.__selection = selection;
+window.__overlays = overlays;
 const hud = initHud({ world, control, canvas });
 const atmosphere = createAtmosphere();
 window.__atmosphere = atmosphere;
@@ -88,11 +94,20 @@ function draw() {
     drawn[species] = (drawn[species] ?? 0) + 1;
   }
   atmosphere.drawWeather(ctx);
+  for (const overlay of [...overlays]) {
+    try {
+      overlay(ctx);
+    } catch (err) {
+      console.error("overlay failed and was removed", err);
+      overlays.splice(overlays.indexOf(overlay), 1);
+    }
+  }
   window.__renderStats = { drawn };
 }
 
 let last = performance.now();
 function frame(now) {
+  requestAnimationFrame(frame);
   const dt = Math.min((now - last) / 1000, 0.1);
   last = now;
   events.update(world, dt);
@@ -100,15 +115,14 @@ function frame(now) {
     step(world, dt);
     stats.maybeSample(world);
   }
-  ticker.drain(world);
   atmosphere.update(dt, world.width, world.height);
   draw();
+  ticker.drain(world);
   hud.draw(ctx, now);
-  requestAnimationFrame(frame);
 }
 
 window.addEventListener("resize", resize);
 resize();
-const unmountPanels = mountPanels({ world, events, canvas, stats, control });
+const unmountPanels = mountPanels({ world, events, canvas, stats, control, overlays, selection });
 window.addEventListener("pagehide", unmountPanels);
 requestAnimationFrame(frame);
