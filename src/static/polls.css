@@ -1,0 +1,22 @@
+#poll-form { display: grid; gap: 0.75rem; max-width: 32rem; }
+#poll-form label { display: grid; gap: 0.25rem; }
+#poll-options { display: grid; gap: 0.5rem; }
+.poll-option-row { display: flex; gap: 0.5rem; }
+.poll-option-row input { flex: 1; }
+#poll-error { color: #b00020; margin: 0; }
+#poll-list { padding-left: 1.25rem; }
+#poll-view { max-width: 32rem; }
+#poll-results { display: grid; gap: 0.5rem; }
+.poll-option {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.25rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  cursor: pointer;
+}
+.poll-option[aria-pressed="true"] { outline: 2px solid #1a56db; }
+.poll-option:disabled { cursor: not-allowed; opacity: 0.7; }
+.poll-bar { grid-column: 1 / -1; height: 0.5rem; background: #e5e7eb; border-radius: 0.25rem; overflow: hidden; }
+.poll-bar-fill { display: block; height: 100%; background: #1a56db; }
+#poll-view.closed #poll-total::after { content: " (closed)"; }
