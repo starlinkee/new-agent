@@ -1,5 +1,7 @@
 import { addCreature } from "./world-sim.js";
-import { registerEvent } from "./events.js";
+
+// Ecosystem events (famine, frenzy, migration). Simulation only, no DOM: pass ECOSYSTEM_EVENTS to
+// createEvents({ extensions }) to enable them; render-ecosystem.js holds the matching draw code.
 
 export const ECOSYSTEM_EVENT_DEFAULTS = {
   famineFraction: 0.6, // share of food pellets that vanish
@@ -22,41 +24,44 @@ function famine(world, ctx) {
   const { famineFraction, famineDuration } = settings(ctx);
   const before = world.food.length;
   const target = Math.round(before * famineFraction);
-  // Partial Fisher-Yates via the events RNG picks exactly `target` pellets to remove.
+  // Partial Fisher-Yates via the events RNG: after `target` swaps, the tail of `order` is a uniform random
+  // sample of exactly `target` pellets to remove.
   const order = world.food.map((_, i) => i);
-  for (let i = order.length - 1; i > 0; i--) {
+  for (let i = order.length - 1; i >= order.length - target && i > 0; i--) {
     const j = Math.floor(ctx.random() * (i + 1));
     [order[i], order[j]] = [order[j], order[i]];
   }
-  const doomed = new Set(order.slice(0, target));
+  const doomed = new Set(order.slice(order.length - target));
   world.food = world.food.filter((_, i) => !doomed.has(i));
   ctx.effects.push({ type: "famine", age: 0, duration: famineDuration });
   return { text: `Famine! ${plural(target, "food pellet")} withered`, affected: target };
 }
 
+// Overlapping frenzies stack by count, not by multiplying: a predator is boosted while at least one frenzy covers
+// it, and `speed` itself is never rewritten (movement reads `boost`, see predators.js).
 function frenzy(world, ctx) {
   const { frenzyBoost, frenzyDuration } = settings(ctx);
-  const saved = new Map();
-  for (const c of world.creatures) {
-    if (c.species !== "predator") continue;
-    saved.set(c, { speed: c.speed, vision: c.vision });
-    c.speed *= 1 + frenzyBoost;
-    c.vision = (c.vision ?? world.config.visionRadius) * (1 + frenzyBoost);
+  const victims = world.creatures.filter((c) => c.species === "predator" && !c.dead);
+  for (const c of victims) {
+    c.frenzy = (c.frenzy ?? 0) + 1;
+    c.boost = 1 + frenzyBoost;
   }
   ctx.effects.push({
     type: "frenzy",
-    victims: [...saved.keys()],
+    victims,
     age: 0,
     duration: frenzyDuration,
     expire() {
-      for (const [c, before] of saved) {
-        c.speed = before.speed;
-        if (before.vision === undefined) delete c.vision;
-        else c.vision = before.vision;
+      for (const c of this.victims) {
+        c.frenzy -= 1;
+        if (c.frenzy <= 0) {
+          delete c.frenzy;
+          delete c.boost;
+        }
       }
     },
   });
-  return { text: `Hunt frenzy! ${plural(saved.size, "predator")} boosted`, affected: saved.size };
+  return { text: `Hunt frenzy! ${plural(victims.length, "predator")} boosted`, affected: victims.length };
 }
 
 function migration(world, ctx) {
@@ -80,33 +85,8 @@ function migration(world, ctx) {
   return { text: `Migration! ${plural(arrived, "herbivore")} arrived`, affected: arrived };
 }
 
-registerEvent("famine", famine);
-registerEvent("frenzy", frenzy);
-registerEvent("migration", migration);
-
-// Draw code for the effects above; world.js calls it for any effect type it does not know.
-export function drawEcosystemEffect(ctx, e) {
-  const t = Math.min(e.age / e.duration, 1);
-  if (e.type === "famine") {
-    ctx.strokeStyle = `rgba(200, 150, 60, ${1 - t})`;
-    ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.arc(ctx.canvas.clientWidth / 2, ctx.canvas.clientHeight / 2, Math.max(ctx.canvas.clientWidth, ctx.canvas.clientHeight) * t * 0.6, 0, Math.PI * 2);
-    ctx.stroke();
-  } else if (e.type === "frenzy") {
-    ctx.strokeStyle = "rgba(230, 50, 50, 0.7)";
-    ctx.lineWidth = 2;
-    for (const c of e.victims) {
-      if (c.dead) continue;
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, c.radius + 4, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-  } else if (e.type === "migration") {
-    ctx.strokeStyle = `rgba(90, 170, 255, ${1 - t})`;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(e.x, e.y, 20 + 60 * t, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-}
+export const ECOSYSTEM_EVENTS = Object.freeze([
+  { type: "famine", handler: famine, defaults: ECOSYSTEM_EVENT_DEFAULTS },
+  { type: "frenzy", handler: frenzy, defaults: ECOSYSTEM_EVENT_DEFAULTS },
+  { type: "migration", handler: migration, defaults: ECOSYSTEM_EVENT_DEFAULTS },
+]);

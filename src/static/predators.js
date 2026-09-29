@@ -40,6 +40,21 @@ export function addPredator(world, props = {}) {
   });
 }
 
+// Temporary effects (e.g. the frenzy event) raise `boost`; the base `speed` stays untouched, so offspring inherit
+// the unboosted value and an effect's expiry cannot leave a stat stuck at a boosted level.
+export function boostOf(p) {
+  return p.boost ?? 1;
+}
+
+export function effectiveSpeed(p) {
+  return p.speed * boostOf(p);
+}
+
+export function effectiveVision(world, p) {
+  const t = world.config.species?.predator ?? PREDATOR_DEFAULTS;
+  return t.predatorVision * boostOf(p);
+}
+
 // Fills `out` with the living herbivores, reusing the array between ticks.
 function collectPrey(world, out) {
   out.length = 0;
@@ -128,10 +143,11 @@ export function predatorSystem(world, dt) {
   for (let i = 0, n = world.creatures.length; i < n; i++) {
     const p = world.creatures[i];
     if (p.species !== "predator" || p.dead) continue;
-    const prey = nearestPrey(world, p, preyBuffer, t.predatorVision);
+    const prey = nearestPrey(world, p, preyBuffer, t.predatorVision * boostOf(p));
     steer(world, p, prey, t, dt);
-    p.x = wrap(p.x + Math.cos(p.heading) * p.speed * dt, world.width);
-    p.y = wrap(p.y + Math.sin(p.heading) * p.speed * dt, world.height);
+    const speed = effectiveSpeed(p);
+    p.x = wrap(p.x + Math.cos(p.heading) * speed * dt, world.width);
+    p.y = wrap(p.y + Math.sin(p.heading) * speed * dt, world.height);
     p.age += dt;
     p.energy -= (t.baseDrain + speedDrain * p.speed * p.speed) * dt;
     if (prey && !prey.dead && contact(world, p, prey)) {
