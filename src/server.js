@@ -9,6 +9,7 @@ import { handleHealth } from "./health.js";
 import { handleSnapshots } from "./world-snapshots.js";
 import { handlePixels } from "./pixels.js";
 import { handlePixelStream } from "./pixels-stream.js";
+import { handlePixelsHistory } from "./pixels-history.js";
 
 export function renderPage() {
   return layout({
@@ -26,6 +27,7 @@ http
       if (await handleTodos(req, res)) return;
       if (await handleSnapshots(req, res)) return;
       if (await handlePixelStream(req, res)) return;
+      if (await handlePixelsHistory(req, res)) return;
       if (await handlePixels(req, res)) return;
       await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage });
     } catch {
