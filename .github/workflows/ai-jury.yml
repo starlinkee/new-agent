@@ -12,7 +12,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - run: git diff origin/${{ github.base_ref }} HEAD > pr_diff.txt
+      # Three dots: only what the PR itself changed, measured from the merge base. A plain
+      # two-dot diff against the *current* base shows every commit that landed on the base
+      # since this run was created (e.g. while it waited for approval) as a revert by the PR.
+      - run: git diff origin/${{ github.base_ref }}...HEAD > pr_diff.txt
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
