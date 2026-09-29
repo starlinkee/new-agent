@@ -117,7 +117,9 @@ function draw() {
       overlay(ctx);
     } catch (err) {
       console.error("overlay failed and was removed", err);
-      overlays.splice(overlays.indexOf(overlay), 1);
+      // It may have removed itself before throwing; splice(-1) would drop a healthy overlay.
+      const at = overlays.indexOf(overlay);
+      if (at >= 0) overlays.splice(at, 1);
     }
   }
   window.__renderStats = { drawn };
