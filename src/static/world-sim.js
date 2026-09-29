@@ -276,6 +276,11 @@ export function step(world, dt) {
   const born = [];
   const survivors = [];
   for (const c of world.creatures) {
+    // Other species run their own logic in a registered system.
+    if (c.species !== "herbivore") {
+      survivors.push(c);
+      continue;
+    }
     steer(world, c, dt);
     c.x = wrap(c.x + Math.cos(c.heading) * c.speed * dt, world.width);
     c.y = wrap(c.y + Math.sin(c.heading) * c.speed * dt, world.height);
