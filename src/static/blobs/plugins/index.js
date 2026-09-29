@@ -6,8 +6,9 @@
 // for joined, eaten and left events; both return an unsubscribe function.
 import * as leaderboard from "./leaderboard.js";
 import * as scores from "./scores.js";
+import * as feed from "./feed.js";
 
-export const PLUGINS = [leaderboard, scores];
+export const PLUGINS = [leaderboard, scores, feed];
 
 // One failing plugin must not stop the page; returns a function that unmounts the plugins that started.
 export function mountPlugins(ctx) {
