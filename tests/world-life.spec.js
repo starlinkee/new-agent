@@ -101,3 +101,15 @@ test("the live page renders food and creatures with life stats", async ({ page }
   const stats = await page.evaluate(() => window.__world.creatures.every((c) => c.energy > 0 && c.generation >= 0 && c.age >= 0));
   expect(stats).toBe(true);
 });
+
+test("splitting never pushes the population past maxCreatures", async ({ page }) => {
+  const result = await inPage(page, async () => {
+    const sim = await import("/static/world-sim.js");
+    const world = sim.createWorld({ seed: 5, count: 0, config: { foodSpawnRate: 0, respawn: false } });
+    const cap = world.config.maxCreatures;
+    for (let i = 0; i < cap - 1; i++) sim.addCreature(world, { energy: 95 });
+    sim.step(world, 1 / 30);
+    return { size: world.creatures.length, cap };
+  });
+  expect(result.size).toBeLessThanOrEqual(result.cap);
+});

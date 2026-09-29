@@ -312,7 +312,9 @@ export function step(world, dt) {
 
   const born = [];
   const survivors = [];
-  for (const c of world.creatures) {
+  const pending = world.creatures;
+  for (let i = 0; i < pending.length; i++) {
+    const c = pending[i];
     // Species that registered their own system (manageSpecies) are advanced there, not here.
     if (world.managedSpecies.has(c.species)) {
       survivors.push(c);
@@ -330,7 +332,9 @@ export function step(world, dt) {
     eat(world, c);
     c.radius = creatureRadius(world, c);
     survivors.push(c);
-    if (c.energy >= splitThreshold && survivors.length + born.length < maxCreatures) {
+    // creatures still waiting in this tick count toward the cap too
+    const remaining = pending.length - i - 1;
+    if (c.energy >= splitThreshold && survivors.length + born.length + remaining < maxCreatures) {
       born.push(split(world, c));
       c.radius = creatureRadius(world, c);
     }
