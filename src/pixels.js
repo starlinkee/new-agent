@@ -10,10 +10,6 @@ export const PALETTE = [
 ];
 // A paint request is tiny ({"x":63,"y":63,"color":15}); this is a pixels decision, not a todos one.
 export const MAX_PIXEL_BODY_BYTES = 1024;
-// Per-client paint throttle: a burst of PAINT_BURST paints, refilled at PAINT_REFILL_PER_SECOND.
-// Wiping the whole 4096-pixel board from one client takes ~17 minutes instead of seconds.
-export const PAINT_BURST = 30;
-export const PAINT_REFILL_PER_SECOND = 4;
 
 const HEX = "0123456789abcdef";
 
@@ -85,38 +81,6 @@ export class PixelStore {
 
 export const pixelStore = new PixelStore();
 
-// Token bucket per client key. take() returns 0 when allowed, else seconds to wait.
-export class RateLimiter {
-  #buckets = new Map();
-
-  constructor({ burst = PAINT_BURST, refillPerSecond = PAINT_REFILL_PER_SECOND, now = () => Date.now() } = {}) {
-    this.burst = burst;
-    this.refillPerSecond = refillPerSecond;
-    this.now = now;
-  }
-
-  take(key) {
-    const now = this.now();
-    const bucket = this.#buckets.get(key) ?? { tokens: this.burst, at: now };
-    bucket.tokens = Math.min(this.burst, bucket.tokens + ((now - bucket.at) / 1000) * this.refillPerSecond);
-    bucket.at = now;
-    this.#buckets.set(key, bucket);
-    this.#prune(now);
-    if (bucket.tokens >= 1) {
-      bucket.tokens -= 1;
-      return 0;
-    }
-    return Math.max(1, Math.ceil((1 - bucket.tokens) / this.refillPerSecond));
-  }
-
-  // Forget buckets that have fully refilled, so the map cannot grow without bound.
-  #prune(now) {
-    if (this.#buckets.size < 10_000) return;
-    const fullAfterMs = (this.burst / this.refillPerSecond) * 1000;
-    for (const [key, b] of this.#buckets) if (now - b.at >= fullAfterMs) this.#buckets.delete(key);
-  }
-}
-
 function parseCoordinate(value, name, max) {
   if (value === null || !/^\d+$/.test(value) || Number(value) >= max) {
     throw new HttpError(400, `${name} must be an integer between 0 and ${max - 1}`);
@@ -131,7 +95,7 @@ function requireInteger(value, name, max) {
   return value;
 }
 
-async function route(store, limiter, req, res, url) {
+async function route(store, req, res, url) {
   const read = req.method === "GET" || req.method === "HEAD";
   if (url.pathname === "/api/pixels/at") {
     if (!read) throw new HttpError(405, "method not allowed", { allow: "GET, HEAD" });
@@ -152,15 +116,13 @@ async function route(store, limiter, req, res, url) {
     const x = requireInteger(body.x, "x", BOARD_WIDTH);
     const y = requireInteger(body.y, "y", BOARD_HEIGHT);
     const color = requireInteger(body.color, "color", PALETTE.length);
-    const wait = limiter.take(req.socket?.remoteAddress ?? "unknown");
-    if (wait > 0) throw new HttpError(429, "too many paints, slow down", { "retry-after": String(wait) });
     return send(res, 200, store.paint(x, y, color));
   }
   throw new HttpError(405, "method not allowed", { allow: "GET, HEAD, POST" });
 }
 
 // Returns a handler for /api/pixels requests: resolves true when the request was handled.
-export function createPixelHandler(store = pixelStore, { limiter = new RateLimiter() } = {}) {
+export function createPixelHandler(store = pixelStore) {
   return async function handlePixels(req, res) {
     let url;
     try {
@@ -171,7 +133,7 @@ export function createPixelHandler(store = pixelStore, { limiter = new RateLimit
     if (!/^\/api\/pixels(?:\/at)?\/?$/.test(url.pathname)) return false;
     if (url.pathname.endsWith("/")) url.pathname = url.pathname.slice(0, -1);
     try {
-      await route(store, limiter, req, res, url);
+      await route(store, req, res, url);
     } catch (err) {
       if (!(err instanceof HttpError)) throw err;
       if (res.headersSent) return true;
