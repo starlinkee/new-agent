@@ -6,6 +6,7 @@ import { layout } from "./layout.js";
 import { handleRequest } from "./site.js";
 import { handleHealth } from "./health.js";
 import { handleSnapshots } from "./world-snapshots.js";
+import { handlePixels } from "./pixels.js";
 
 export function renderPage() {
   return layout({
@@ -22,6 +23,7 @@ http
       if (new URL(req.url, "http://localhost").pathname === "/health") return handleHealth(req, res);
       if (await handleTodos(req, res)) return;
       if (await handleSnapshots(req, res)) return;
+      if (await handlePixels(req, res)) return;
       await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage });
     } catch {
       if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });

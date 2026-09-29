@@ -1,14 +1,11 @@
+import { HttpError, readJson as readJsonBody, send } from "./http.js";
+
+// Re-exported for existing importers (world-snapshots.js).
+export { HttpError };
+
 export const MAX_BODY_BYTES = 16 * 1024;
 export const MAX_TITLE_LENGTH = 500;
 export const MAX_TODOS = 1000;
-
-export class HttpError extends Error {
-  constructor(status, message, headers = {}) {
-    super(message);
-    this.status = status;
-    this.headers = headers;
-  }
-}
 
 // In-memory store. Ids are unique and never reused for the process lifetime.
 export class TodoRepository {
@@ -79,63 +76,8 @@ function parseQueryInt(value, name, min, max, fallback) {
   return Number(value);
 }
 
-function send(res, status, body, headers = {}) {
-  const base = { "x-content-type-options": "nosniff", ...headers };
-  if (body === undefined) {
-    res.writeHead(status, base);
-    res.end();
-    return;
-  }
-  res.writeHead(status, { ...base, "content-type": "application/json; charset=utf-8" });
-  res.end(JSON.stringify(body));
-}
-
 function readJson(req) {
-  const type = (req.headers["content-type"] || "").split(";")[0].trim().toLowerCase();
-  if (type !== "application/json") {
-    return Promise.reject(new HttpError(415, "content-type must be application/json"));
-  }
-  const declared = Number(req.headers["content-length"]);
-  if (declared > MAX_BODY_BYTES) {
-    return Promise.reject(new HttpError(413, "payload too large", { connection: "close" }));
-  }
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-    let settled = false;
-    const fail = (err) => {
-      if (settled) return;
-      settled = true;
-      reject(err);
-    };
-    req.on("data", (chunk) => {
-      if (settled) return;
-      size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
-        chunks.length = 0;
-        fail(new HttpError(413, "payload too large", { connection: "close" }));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => {
-      if (settled) return;
-      settled = true;
-      let parsed;
-      try {
-        parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      } catch {
-        return reject(new HttpError(400, "malformed JSON"));
-      }
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return reject(new HttpError(400, "body must be a JSON object"));
-      }
-      resolve(parsed);
-    });
-    req.on("aborted", () => fail(new HttpError(400, "request aborted")));
-    req.on("close", () => fail(new HttpError(400, "request aborted")));
-    req.on("error", () => fail(new HttpError(400, "request error")));
-  });
+  return readJsonBody(req, { maxBytes: MAX_BODY_BYTES });
 }
 
 function methodNotAllowed(allow) {
