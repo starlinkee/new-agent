@@ -11,7 +11,7 @@ test("world page has the three named panel slots and shows only mounted ones", a
   for (const id of SLOTS) await expect(page.locator(`#panels > section#${id} > h2`)).toHaveCount(1);
   await expect(page.locator("#panels")).toBeVisible();
   await expect(page.locator("#panel-stats")).toBeVisible();
-  await expect(page.locator("#panel-inspector")).toBeHidden();
+  await expect(page.locator("#panel-inspector")).toBeVisible();
   await expect(page.locator("#panel-save")).toBeVisible();
   await expect(page.locator("canvas#world")).toBeVisible();
 });

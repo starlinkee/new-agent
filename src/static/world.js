@@ -16,6 +16,8 @@ const events = createEvents();
 const ticker = createTicker(document.getElementById("ticker"));
 const stats = createStats();
 const control = { paused: false, speed: 1 };
+// Panels push fn(ctx2d) here to draw on top of the world each frame.
+const overlays = [];
 const hud = initHud({ world, control, canvas });
 const atmosphere = createAtmosphere();
 window.__atmosphere = atmosphere;
@@ -88,6 +90,7 @@ function draw() {
     drawn[species] = (drawn[species] ?? 0) + 1;
   }
   atmosphere.drawWeather(ctx);
+  for (const overlay of overlays) overlay(ctx);
   window.__renderStats = { drawn };
 }
 
@@ -100,15 +103,15 @@ function frame(now) {
     step(world, dt);
     stats.maybeSample(world);
   }
-  ticker.drain(world);
   atmosphere.update(dt, world.width, world.height);
   draw();
+  ticker.drain(world); // after draw so overlays can read this frame's log entries
   hud.draw(ctx, now);
   requestAnimationFrame(frame);
 }
 
 window.addEventListener("resize", resize);
 resize();
-const unmountPanels = mountPanels({ world, events, canvas, stats, control });
+const unmountPanels = mountPanels({ world, events, canvas, stats, control, overlays });
 window.addEventListener("pagehide", unmountPanels);
 requestAnimationFrame(frame);
