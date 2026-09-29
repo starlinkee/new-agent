@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderNotFound } from "./layout.js";
+import { linkHosts, pagePath } from "./hosts.js";
 
 const STATIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "static");
 const STATIC_PREFIX = "/static/";
@@ -36,8 +37,9 @@ async function serveStatic(rawPath, res) {
 }
 
 export async function handleRequest(req, res, pages) {
-  const rawPath = (req.url || "/").split(/[?#]/)[0];
-  if (Object.hasOwn(pages, rawPath)) return sendHtml(res, 200, pages[rawPath]());
+  const host = req.headers.host;
+  const rawPath = pagePath(host, (req.url || "/").split(/[?#]/)[0]);
+  if (Object.hasOwn(pages, rawPath)) return sendHtml(res, 200, linkHosts(host, pages[rawPath]()));
   if (rawPath.startsWith(STATIC_PREFIX) && (await serveStatic(rawPath, res))) return;
-  sendHtml(res, 404, renderNotFound());
+  sendHtml(res, 404, linkHosts(host, renderNotFound()));
 }
