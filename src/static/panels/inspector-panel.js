@@ -1,10 +1,11 @@
 // Creature inspector: click a creature on the canvas to follow its stats; a ring marks the selection.
-import { delta } from "/static/world-sim.js";
+import { delta, onDeath } from "/static/world-sim.js";
 import { speciesColor } from "/static/render-species.js";
 
 export const slot = "panel-inspector";
 
 const PICK_MARGIN = 6; // px beyond the creature's radius that still counts as a hit
+const REFRESH_MS = 100; // text refresh period; the canvas ring is drawn every frame
 
 const FIELDS = [
   ["id", "Id"],
@@ -31,10 +32,10 @@ export function pickCreature(world, point) {
 }
 
 export function mount(el, ctx) {
-  if (!ctx?.world || !ctx.canvas || !Array.isArray(ctx.overlays)) {
-    throw new Error("inspector panel requires ctx.world, ctx.canvas and ctx.overlays");
+  if (!ctx?.world || !ctx.canvas || !Array.isArray(ctx.overlays) || !ctx.selection) {
+    throw new Error("inspector panel requires ctx.world, ctx.canvas, ctx.overlays and ctx.selection");
   }
-  const { world, canvas, overlays } = ctx;
+  const { world, canvas, overlays, selection } = ctx;
 
   const content = document.createElement("div");
   content.id = "inspector-content";
@@ -66,7 +67,7 @@ export function mount(el, ctx) {
   el.append(content);
 
   let selected = null;
-  world.selectedId = null;
+  selection.id = null;
 
   function setText(node, text) {
     if (node.textContent !== text) node.textContent = text;
@@ -88,61 +89,89 @@ export function mount(el, ctx) {
     message.hidden = true;
     list.style.display = "grid";
     setText(values.id, `#${c.id}`);
-    setText(values.species, c.species ?? "herbivore");
+    setText(values.species, c.species);
     setText(values.generation, String(c.generation));
     setText(values.age, `${c.age.toFixed(1)} s`);
-    bar.value = Math.max(0, c.energy);
+    const energy = Math.max(0, c.energy);
+    if (bar.value !== energy) bar.value = energy;
     setText(energyText, c.energy.toFixed(1));
     setText(values.speed, c.speed.toFixed(1));
     setText(hueText, String(Math.round(c.hue)));
-    swatch.style.background = `hsl(${c.hue} 80% 50%)`;
-  }
-
-  function deathCause(id) {
-    for (let i = world.log.length - 1; i >= 0; i--) {
-      const entry = world.log[i];
-      if (entry.kind === "death" && entry.id === id) return entry.cause;
+    const color = `hsl(${c.hue} 80% 50%)`;
+    if (swatch.dataset.color !== color) {
+      swatch.dataset.color = color;
+      swatch.style.background = color;
     }
-    return null;
   }
 
-  // Runs every frame: refreshes the panel, notices death, and draws the highlight ring.
-  function overlay(g) {
+  function select(c) {
+    selected = c;
+    selection.id = c ? c.id : null;
+  }
+
+  function reportDeath(c, cause) {
+    select(null);
+    showDeath(`Creature #${c.id} died (${cause})`);
+  }
+
+  // Death notification from the sim; covers deaths inside step() and silent ones (meteor).
+  const stopDeaths = onDeath(world, (c, cause) => {
+    if (selected === c) reportDeath(c, cause);
+  });
+
+  function refresh() {
     if (!selected) return;
     if (selected.dead || !world.creatures.includes(selected)) {
-      const cause = deathCause(selected.id) ?? "removed";
-      showDeath(`Creature #${selected.id} died (${cause})`);
-      selected = null;
-      world.selectedId = null;
+      reportDeath(selected, "removed"); // dropped without dying, e.g. a world reset
       return;
     }
     showCreature(selected);
+  }
+
+  // Canvas only: ring at every wrapped copy of the selected creature that is visible.
+  function overlay(g) {
+    if (!selected) return;
+    const r = selected.radius + 5;
     g.save();
-    g.strokeStyle = speciesColor(selected.species ?? "herbivore");
+    g.strokeStyle = speciesColor(selected.species);
     g.lineWidth = 2;
-    g.beginPath();
-    g.arc(selected.x, selected.y, selected.radius + 5, 0, Math.PI * 2);
-    g.stroke();
+    for (const dx of [0, world.width, -world.width]) {
+      for (const dy of [0, world.height, -world.height]) {
+        const x = selected.x + dx;
+        const y = selected.y + dy;
+        if (x + r < 0 || y + r < 0 || x - r > world.width || y - r > world.height) continue;
+        g.beginPath();
+        g.arc(x, y, r, 0, Math.PI * 2);
+        g.stroke();
+      }
+    }
     g.restore();
   }
 
   function onClick(event) {
     if (event.shiftKey) return; // shift-click adds a creature
     const rect = canvas.getBoundingClientRect();
-    const hit = pickCreature(world, { x: event.clientX - rect.left, y: event.clientY - rect.top });
-    selected = hit;
-    world.selectedId = hit ? hit.id : null;
-    if (hit) showCreature(hit);
+    // World units are canvas layout pixels; scale in case CSS displays the canvas at another size.
+    const point = {
+      x: ((event.clientX - rect.left) * world.width) / rect.width,
+      y: ((event.clientY - rect.top) * world.height) / rect.height,
+    };
+    select(pickCreature(world, point));
+    if (selected) showCreature(selected);
     else showEmpty();
   }
 
   showEmpty();
   canvas.addEventListener("click", onClick);
   overlays.push(overlay);
+  const timer = setInterval(refresh, REFRESH_MS);
 
   return () => {
+    clearInterval(timer);
+    stopDeaths();
     canvas.removeEventListener("click", onClick);
     const at = overlays.indexOf(overlay);
     if (at >= 0) overlays.splice(at, 1);
+    select(null);
   };
 }

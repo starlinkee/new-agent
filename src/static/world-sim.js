@@ -80,6 +80,22 @@ export function kill(world, c, cause = "starved", { silent = false } = {}) {
   c.dead = true;
   world.deaths++;
   if (!silent) record(world, { kind: "death", id: c.id, generation: c.generation, cause });
+  for (const listener of [...world.deathListeners]) {
+    try {
+      listener(c, cause);
+    } catch (err) {
+      console.error("death listener failed", err);
+    }
+  }
+}
+
+// Subscribes fn(creature, cause) to every death, silent ones included; returns the unsubscribe function.
+export function onDeath(world, fn) {
+  world.deathListeners.push(fn);
+  return () => {
+    const at = world.deathListeners.indexOf(fn);
+    if (at >= 0) world.deathListeners.splice(at, 1);
+  };
 }
 
 export function removeCreatures(world, predicate, cause, options) {
@@ -116,6 +132,7 @@ export function createWorld({ width = 800, height = 600, count = CREATURE_COUNT,
     systems: [...systems],
     managedSpecies: new Set(),
     resetHandlers: [],
+    deathListeners: [],
     creatures: [],
     food: [],
     foodBudget: 0,
