@@ -112,7 +112,7 @@ test("herbivores still eat food and split as before with predators enabled", asy
 });
 
 test("/world boots with 20 herbivores and 3 predators", async ({ page }) => {
-  await page.goto("/world");
+  await page.goto("/world?seed=1&paused=1");
   await page.waitForFunction(() => window.__world);
   const counts = await page.evaluate(async () => {
     // The page keeps simulating during the import (a predator can split or eat before we count),

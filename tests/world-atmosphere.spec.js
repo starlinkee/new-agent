@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 async function open(page) {
-  await page.goto("/world");
+  await page.goto("/world?seed=1&paused=1");
   await page.waitForFunction(() => window.__atmosphere);
 }
 

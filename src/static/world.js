@@ -12,12 +12,16 @@ import { enablePredators } from "/static/predators.js";
 
 const canvas = document.getElementById("world");
 const ctx = canvas.getContext("2d");
-const world = createWorld({ width: canvas.clientWidth, height: canvas.clientHeight });
+// Opt-in determinism for tests and replays: ?seed=N seeds the world and its events, ?paused=1 starts paused.
+const query = new URLSearchParams(location.search);
+const seedParam = query.get("seed");
+const seed = seedParam !== null && seedParam.trim() !== "" && Number.isFinite(Number(seedParam)) ? Number(seedParam) : undefined;
+const world = createWorld({ width: canvas.clientWidth, height: canvas.clientHeight, seed });
 enablePredators(world);
-const events = createEvents({ extensions: ECOSYSTEM_EVENTS });
+const events = createEvents({ seed, extensions: ECOSYSTEM_EVENTS });
 const ticker = createTicker(document.getElementById("ticker"));
 const stats = createStats();
-const control = { paused: false, speed: 1 };
+const control = { paused: query.get("paused") === "1", speed: 1 };
 // Panels push fn(ctx2d) here to draw on top of the world each frame.
 const overlays = [];
 // Which creature the inspector follows; view state, kept out of the sim world.
