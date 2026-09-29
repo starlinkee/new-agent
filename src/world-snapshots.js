@@ -6,6 +6,14 @@ export const MAX_NAME_LENGTH = 60;
 // Request body = data (<= MAX_SNAPSHOT_BYTES) plus room for the name and JSON framing.
 const MAX_BODY_BYTES = MAX_SNAPSHOT_BYTES + 4 * 1024;
 
+// Summary shown in list views, computed once at save time so listing never needs the blobs.
+function summarize(data) {
+  return {
+    time: Number.isFinite(data.time) ? data.time : 0,
+    creatureCount: Array.isArray(data.creatures) ? data.creatures.length : 0,
+  };
+}
+
 // In-memory store. Ids are unique and never reused; the oldest snapshot is evicted past the cap.
 export class SnapshotStore {
   #snapshots = new Map();
@@ -21,7 +29,7 @@ export class SnapshotStore {
   }
 
   create(name, data, size) {
-    const snapshot = { id: this.#nextId++, name, savedAt: new Date().toISOString(), size, data };
+    const snapshot = { id: this.#nextId++, name, savedAt: new Date().toISOString(), size, ...summarize(data), data };
     this.#snapshots.set(snapshot.id, snapshot);
     while (this.#snapshots.size > MAX_SNAPSHOTS) {
       this.#snapshots.delete(this.#snapshots.keys().next().value);
