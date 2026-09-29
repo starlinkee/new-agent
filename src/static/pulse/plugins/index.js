@@ -4,8 +4,9 @@
 // ctx = { site, getRange(), getSummary(), onData(listener), refresh(), addCard({ name, title, span, order }), headerTools }.
 
 import * as install from "./install.js";
+import * as devices from "./devices.js";
 
-export const PLUGINS = [install];
+export const PLUGINS = [install, devices];
 
 // One failing plugin must not stop the page; returns a function that unmounts the plugins that started.
 export function mountPlugins(ctx, plugins = PLUGINS) {
