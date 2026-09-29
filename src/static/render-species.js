@@ -12,6 +12,16 @@ export function predatorHue(hue) {
   return (PREDATOR_HUE_MIN + t * (PREDATOR_HUE_MAX - PREDATOR_HUE_MIN)) % 360;
 }
 
+// One color per species, shared by the legend and the population chart.
+const SPECIES_COLORS = { herbivore: "hsl(140 80% 50%)", predator: "hsl(0 80% 50%)" };
+
+export function speciesColor(name) {
+  if (SPECIES_COLORS[name]) return SPECIES_COLORS[name];
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `hsl(${h} 70% 60%)`;
+}
+
 function shapePath(ctx, shape, x, y, r, heading) {
   ctx.beginPath();
   if (shape === "circle") {
@@ -62,7 +72,7 @@ export function renderLegend(el) {
     swatch.width = 24;
     swatch.height = 24;
     const sctx = swatch.getContext("2d");
-    sctx.fillStyle = species === "predator" ? "hsl(0 80% 50%)" : "hsl(140 80% 50%)";
+    sctx.fillStyle = speciesColor(species);
     shapePath(sctx, shapeOf(species), 12, 12, 7, -Math.PI / 2);
     sctx.fill();
     item.append(swatch, document.createTextNode(species));

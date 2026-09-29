@@ -107,5 +107,6 @@ function frame(now) {
 
 window.addEventListener("resize", resize);
 resize();
-mountPanels({ world, events, canvas });
+const unmountPanels = mountPanels({ world, events, canvas, stats, control });
+window.addEventListener("pagehide", unmountPanels);
 requestAnimationFrame(frame);
