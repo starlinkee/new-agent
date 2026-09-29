@@ -1,0 +1,20 @@
+.poll-tool[data-plugin="activity"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.poll-tool[data-plugin="activity"] #poll-activity {
+  width: 100%;
+  height: 6rem;
+}
+
+.poll-tool[data-plugin="activity"] .activity-bar {
+  fill: currentColor;
+  opacity: 0.7;
+}
+
+.poll-tool[data-plugin="activity"] .activity-empty {
+  margin: 0;
+}
