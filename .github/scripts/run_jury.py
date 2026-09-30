@@ -1,9 +1,10 @@
+import json
 import os
 import re
 import subprocess
 import sys
 
-from claude_cli import ask_claude
+from claude_cli import UsageLimit, ask_claude, limit_marker
 from linear_ticket import ticket_text
 from verdict import marker
 
@@ -57,10 +58,12 @@ def post(status, body):
     sys.exit(1 if status == "REJECTED" else 0)
 
 
-def no_verdict(reason, details=""):
+def no_verdict(reason, details="", limit_until=None):
     """Give no verdict, but say why on the PR, so a person reading it later is not left guessing.
 
     Not a verdict comment (no marker): the reconciler starts the jury again for this head.
+    `limit_until`: the Claude quota ran out; it is back at that epoch second. The reconciler
+    then waits until then and does not count the run against the head's retries.
     """
     set_status("error", "AI jury: no verdict")
     subprocess.run(
@@ -68,7 +71,8 @@ def no_verdict(reason, details=""):
         input=(f"**AI jury: no verdict** for head `{SHA[:7]}`: {reason}.\n\n"
                + (f"{fenced(details[-3000:])}\n\n" if details.strip() else "")
                + f"Run: {RUN_URL}\n\nThe reconciler starts the jury again, up to 3 times per head, "
-                 "then parks the ticket for a person."),
+                 "then parks the ticket for a person."
+               + (f"\n\n{limit_marker(limit_until)}" if limit_until else "")),
         text=True,
     )
     sys.exit(1)
@@ -76,6 +80,27 @@ def no_verdict(reason, details=""):
 
 def fenced(text):
     return "```text\n" + text.replace("```", "'''") + "\n```"
+
+
+def doctor_test_changes():
+    """The Merge Doctor's `## Test changes` section for exactly this head, else empty.
+
+    Only the pipeline's own comment counts (github-actions, the doctor's header, naming the
+    head it pushed): the worker cannot post one, so it cannot excuse its own test edits.
+    """
+    out = subprocess.run(["gh", "api", f"repos/{os.environ['GH_REPO']}/issues/{PR}/comments?per_page=100"],
+                         capture_output=True, text=True)
+    try:
+        comments = json.loads(out.stdout or "[]")
+    except ValueError:
+        return ""
+    for c in reversed(comments):
+        body = c.get("body") or ""
+        if (c["user"]["login"].startswith("github-actions") and body.startswith("**AI Merge Doctor (Opus)**")
+                and f"`{SHA[:7]}`" in body):
+            m = re.search(r"^##\s+Test changes\s*$(.*?)(?=^##\s|^_Run:|\Z)", body, re.M | re.S)
+            return m.group(1).strip() if m else ""
+    return ""
 
 
 set_status("pending", "AI jury: reviewing")
@@ -113,6 +138,13 @@ Reject only for BLOCKING problems:
    else, or changes things far outside the ticket's scope.
 2. User-visible behaviour is added or changed without a Playwright test that checks it;
    tests are weakened, skipped, or assert nothing meaningful; the test script is gamed.
+   One exception: a test the Merge Doctor changed, listed under "Merge Doctor's test
+   changes" below. The doctor is a separate agent from the one that wrote the PR and may
+   change a test that can never pass. You are the second, independent judgment: accept
+   such a change only if its justification holds (the old test really was unsatisfiable or
+   wrong, not a real bug), the new test still checks the same acceptance item, and it
+   asserts something meaningful. Reject it if it merely loosens the check to fit buggy
+   behavior, deletes coverage, or if a test changed in the diff is not listed there.
 3. Security: injection, XSS, secrets in code, missing input validation at the API boundary.
 4. Correctness bugs you would not ship; TODOs, stubs, mocked data, dead code paths.
 5. Architecture or performance problems that will clearly hurt: bypassed layers,
@@ -140,12 +172,15 @@ Answer in exactly this format:
 ticket = ticket_text(HEAD)
 pr = subprocess.run(["gh", "pr", "view", PR, "--json", "title,body", "--jq", '.title + "\\n\\n" + .body'],
                     capture_output=True, text=True).stdout
+test_changes = doctor_test_changes()
 summary = next((l for l in reversed(test_log.splitlines()) if re.search(r"\bpassed\b", l)), "")
 prompt = (
     (f"## Linear ticket\n\n{ticket}\n\n" if ticket else
      "## Linear ticket\n\n(not found: judge the diff against the PR description)\n\n")
     + f"## Pull request\n\n{pr}\n\n"
     + f"## Tests\n\n`npm run test:ai` passed: {summary.strip()}\n\n"
+    + (f"## Merge Doctor's test changes (posted by the pipeline, not by the PR author)\n\n{test_changes}\n\n"
+       if test_changes else "")
     + f"## Diff (against the merge base with {BASE}; package-lock.json omitted)\n\n{diff}"
 )
 
@@ -160,6 +195,10 @@ failures = []
 for attempt in range(2):
     try:
         answer = ask_claude(system_prompt, prompt)
+    except UsageLimit as e:
+        print(e, file=sys.stderr)
+        no_verdict("the Claude usage limit is reached (not a failed review; it is retried when the quota is back)",
+                   str(e), limit_until=e.until)
     except RuntimeError as e:
         print(e, file=sys.stderr)
         failures.append(f"attempt {attempt + 1}: the Claude call failed:\n{str(e)[-1200:]}")

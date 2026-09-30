@@ -1,9 +1,10 @@
+import datetime as dt
 import json
 import os
 import subprocess
 import sys
 
-from claude_cli import clean_env, run_claude_agent
+from claude_cli import UsageLimit, clean_env, limit_marker, run_claude_agent
 from linear_ticket import ticket_text
 from verdict import MARKER_RE
 
@@ -19,6 +20,9 @@ from verdict import MARKER_RE
 # --force-with-lease. Neither the agent nor the code it runs sees any credential
 # (claude_cli.clean_env). After the push this script starts the jury on the new head,
 # and the reconciler merges the PR once that head is approved.
+# When the Claude subscription is out of quota the run says so in a comment carrying the time it
+# comes back (claude_cli.limit_marker). That is not an attempt: the reconciler waits until then and
+# retries without counting it.
 # If the doctor can neither fix nor refute a rejection, it labels the PR `needs-human`
 # and the reconciler parks the ticket for a person instead of retrying.
 
@@ -106,7 +110,8 @@ meantime, and `npm run test:ai` passes.
 Rules:
 - Resolve each conflict by understanding what both sides changed and keeping both
   intents. Never blindly take "ours" or "theirs", never drop the PR's feature or
-  {BASE}'s new code, never delete or weaken tests to make them pass.
+  {BASE}'s new code, never delete or weaken tests to make them pass (the one exception
+  is "Changing a test" below).
 - If a rebase is in progress: fix the conflicted files, `git add` them, then
   `GIT_EDITOR=true git rebase --continue`. Repeat until the rebase is finished.
 - Then run `npm run test:ai` (node_modules is already installed). Read the output.
@@ -118,6 +123,21 @@ Rules:
 - Never run `git push`, never rewrite {BASE}, never use `git merge`.
 - If you are convinced a blocking finding is wrong, do not change code for it; explain
   why in your summary. A person then decides.
+- Changing a test. Rare, and only you may do it (the worker agent never can). It is
+  allowed only when a test cannot pass however the code is fixed: it asserts something
+  impossible or contradicting the ticket, needs timing or an environment CI cannot give,
+  or checks the wrong thing. Then change or replace that test instead of the code:
+  * First try to fix the code. Show that the test is wrong: the failure you saw, and why
+    no correct implementation could pass it.
+  * The new test must still check the ticket's acceptance item the old one covered (the
+    same behavior, checked in a reliable way). Deleting a test outright, or loosening it
+    until it asserts nothing, is not allowed. Never change a test to match a bug.
+  * Touch only tests that fail for this reason.
+  * End your summary with a section `## Test changes`, one line per test:
+    `- tests/<file>.spec.js: "<test title>": <what you changed, and why the old one could
+    never pass>`. The AI jury, a separate reviewer, reads exactly this section and rejects
+    a change it does not find justified. A test change without this section counts as
+    tampering and is rejected.
 - A test that failed once and passed on a re-run with nothing changed in between is flaky.
   Do not fix it here (out of scope).
 - Finish with a short plain-text summary: what conflicted, how you resolved it,
@@ -142,6 +162,12 @@ try:
         ["Bash(git *)", "Bash(npm *)", "Bash(npx *)", "Bash(node *)",
          "Read", "Edit", "Write", "Glob", "Grep"],
     )
+except UsageLimit as e:
+    comment("The Claude usage limit is reached, so I did not start. Nothing was pushed. This is not a "
+            "failed attempt: the reconciler retries as soon as the quota is back "
+            f"({dt.datetime.fromtimestamp(e.until, dt.timezone.utc):%Y-%m-%d %H:%M} UTC).\n\n"
+            + limit_marker(e.until))
+    sys.exit(1)
 except SystemExit:
     comment("The Opus run itself failed (see the run log below). Nothing was pushed.")
     raise

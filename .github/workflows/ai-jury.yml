@@ -19,15 +19,22 @@ concurrency:
   cancel-in-progress: true
 permissions: {}
 jobs:
-  pr:
+  # Looks the PR up, then tests it: one job, because a separate job for a one-second API call
+  # costs a runner start (billed as a minute) and the wait for it. The job's outputs feed the jury.
+  # The PR head merged with the current base, like the squash merge will be. Any failure,
+  # including a broken install, counts as "failed"; a PR can never report its own result.
+  tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
+      contents: read
       pull-requests: read
     outputs:
       number: ${{ steps.pr.outputs.number }}
       sha: ${{ steps.pr.outputs.sha }}
       head: ${{ steps.pr.outputs.head }}
       base: ${{ steps.pr.outputs.base }}
+      same_repo: ${{ steps.pr.outputs.same_repo }}
     steps:
       - id: pr
         env:
@@ -41,27 +48,24 @@ jobs:
         run: |
           echo "PR from a fork: not reviewed automatically."
           exit 1
-
-  # The PR head merged with the current base, like the squash merge will be. Any failure,
-  # including a broken install, counts as "failed"; a PR can never report its own result.
-  tests:
-    needs: pr
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.pr.outputs.sha }}
+          ref: ${{ steps.pr.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      # Restore only: this job runs the PR's code, so it must never write a cache that trusted
+      # workflows read. Master tests (master-tests.yml) is the one that saves it.
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
       - name: Merge the base in and run the suite
         env:
-          BASE: ${{ needs.pr.outputs.base }}
+          BASE: ${{ steps.pr.outputs.base }}
           OUT: ${{ runner.temp }}/tests
         run: |
           mkdir -p "$OUT"
@@ -80,8 +84,8 @@ jobs:
           path: ${{ runner.temp }}/tests
 
   jury:
-    needs: [pr, tests]
-    if: ${{ !cancelled() && needs.pr.result == 'success' }}
+    needs: tests
+    if: ${{ !cancelled() && needs.tests.outputs.same_repo == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -95,7 +99,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.pr.outputs.sha }}
+          ref: ${{ needs.tests.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
           path: pr
@@ -107,8 +111,8 @@ jobs:
       # Three dots: only what the PR itself changed, measured from the merge base, so commits
       # that landed on the base in the meantime are not shown as reverts.
       - env:
-          BASE: ${{ needs.pr.outputs.base }}
-          SHA: ${{ needs.pr.outputs.sha }}
+          BASE: ${{ needs.tests.outputs.base }}
+          SHA: ${{ needs.tests.outputs.sha }}
         run: git -C pr diff "origin/$BASE...$SHA" -- . ':(exclude)package-lock.json' > pr_diff.txt
       - uses: actions/setup-python@v5
         with:
@@ -122,8 +126,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
-          PR_NUMBER: ${{ needs.pr.outputs.number }}
-          HEAD_SHA: ${{ needs.pr.outputs.sha }}
-          HEAD_REF: ${{ needs.pr.outputs.head }}
-          BASE_REF: ${{ needs.pr.outputs.base }}
+          PR_NUMBER: ${{ needs.tests.outputs.number }}
+          HEAD_SHA: ${{ needs.tests.outputs.sha }}
+          HEAD_REF: ${{ needs.tests.outputs.head }}
+          BASE_REF: ${{ needs.tests.outputs.base }}
         run: python _trusted/.github/scripts/run_jury.py

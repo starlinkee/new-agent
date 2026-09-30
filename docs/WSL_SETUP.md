@@ -93,7 +93,10 @@ so no permission prompts appear. If `ANTHROPIC_API_KEY` is set it also adds
 Contrabass hardcodes "finished run" to Linear `Done`, and also marks every running
 ticket `Done` when it shuts down, so tickets became Done with an unmerged or
 missing PR. `cb start` therefore also starts `scripts/linear_sync.py` (tmux
-session `linearsync`, every 60 s). GitHub is the source of truth:
+session `linearsync`). It is event-driven: between rounds it probes GitHub (conditional GETs,
+free on 304) and Linear (one tiny query) and runs the next round within seconds of a PR,
+a jury verdict, the master tests or a ticket changing; the 60 s / 300 s heartbeat
+(`--interval` / `--idle-interval`) only covers time-based rules. GitHub is the source of truth:
 
 | GitHub | Linear / action |
 |--------|--------|
@@ -125,9 +128,15 @@ states, and `started` would be re-run as an orphan. `cb sync-log` shows what it 
   `dpkg -x <deb> ~/.local/playwright-libs`. `playwright.config.js` passes that path
   to the browser explicitly, because `LD_LIBRARY_PATH` did not reliably reach it.
 - **Network:** Linear (503, timeouts) and GitHub (`dial tcp ... i/o timeout`)
-  calls fail intermittently from WSL. Not confirmed, but the Windows host runs a
-  VPN/WARP client, which commonly breaks WSL NAT. `linear_sync.py` and Contrabass
-  both retry on the next round.
+  calls fail intermittently from WSL. Measured: a plain TCP connect to
+  `api.github.com:443` sometimes loses its first SYNs, and Linux retransmits at
+  1, 2, 4, 8, 16 s, so one connect stalls ~31 s (a `gh api` call took 30-60 s,
+  while the same request over an open connection takes 0.4 s). The cause is not
+  fixed: the Windows host runs a VPN/WARP client, which commonly breaks WSL NAT.
+  `linear_sync.py` therefore talks to both APIs itself over keep-alive connections
+  with a 4 s connect timeout and fresh-socket retries, instead of one `gh`
+  process per call (a round went from 100+ s to ~4 s). Contrabass and `gh` inside
+  agents still pay for it.
 
 - **Stopping or restarting Contrabass while agents run destroys their work.**
   Shutdown deletes the agents' workspaces, so unpushed code is lost, and Linear

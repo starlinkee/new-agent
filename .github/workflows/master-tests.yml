@@ -6,6 +6,8 @@ name: Master tests
 on:
   push:
     branches: [master]
+    # Nothing to test in a docs-only merge; the reconciler keeps reading the last real result.
+    paths-ignore: ['**.md', 'docs/**']
   workflow_dispatch:
 concurrency:
   group: master-tests
@@ -24,5 +26,12 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
+      # The only workflow that saves the browser cache (it runs trusted, merged code); PR jobs
+      # only restore it.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ai

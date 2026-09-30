@@ -1,10 +1,10 @@
 ---
-max_concurrency: 5
+max_concurrency: 2
 poll_interval_ms: 30000
 max_retry_backoff_ms: 240000
 model: claude-sonnet-5-5
 project_url: https://linear.app/new-agent/project/new-agent-linear-dea87a9266f5
-agent_timeout_ms: 1800000
+agent_timeout_ms: 900000
 stall_timeout_ms: 600000
 tracker:
   type: linear
