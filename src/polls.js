@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { HttpError, readJson, send } from "./http.js";
 
 export const MAX_BODY_BYTES = 4 * 1024;
@@ -48,13 +49,19 @@ export function validateCreate(body) {
 }
 
 // In-memory poll store. Keeps the newest MAX_POLLS polls; one vote per client id per poll.
+// `now` (wall clock) stamps createdAt / closesAt / event times. Whether a poll is closed is decided
+// by `elapsed`, a monotonic clock: Date.now() can step backwards (NTP / VM clock resync), which
+// let a vote 10.5 s after creation still land on a 10 s poll. When only `now` is injected
+// (tests), it drives both.
 export class PollStore {
   #polls = new Map();
   #now;
+  #elapsed;
   #listeners = new Set();
 
-  constructor({ now = Date.now } = {}) {
-    this.#now = now;
+  constructor({ now, elapsed } = {}) {
+    this.#now = now ?? Date.now;
+    this.#elapsed = elapsed ?? now ?? (() => performance.now());
   }
 
   #view(poll) {
@@ -104,6 +111,7 @@ export class PollStore {
       tallies: options.map(() => 0),
       total: 0,
       votes: new Map(),
+      closesAtTick: durationSec === undefined ? null : this.#elapsed() + durationSec * 1000,
     };
     this.#polls.set(poll.id, poll);
     while (this.#polls.size > MAX_POLLS) this.#polls.delete(this.#polls.keys().next().value);
@@ -131,8 +139,7 @@ export class PollStore {
   vote(id, clientId, option) {
     const poll = this.#polls.get(id);
     if (!poll) throw new HttpError(404, "poll not found");
-    const now = this.#now();
-    if (poll.closesAt !== null && now >= Date.parse(poll.closesAt)) throw new HttpError(409, "poll closed");
+    if (poll.closesAtTick !== null && this.#elapsed() >= poll.closesAtTick) throw new HttpError(409, "poll closed");
     if (!Number.isInteger(option) || option < 0 || option >= poll.options.length) {
       throw badRequest(`option must be an integer between 0 and ${poll.options.length - 1}`);
     }
@@ -149,7 +156,7 @@ export class PollStore {
         previous,
         tallies: [...poll.tallies],
         total: poll.total,
-        at: new Date(now).toISOString(),
+        at: new Date(this.#now()).toISOString(),
       });
     }
     return this.#view(poll);
