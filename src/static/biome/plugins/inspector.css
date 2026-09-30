@@ -1,0 +1,11 @@
+#biome-inspector { position: absolute; right: 0.75rem; top: 0.75rem; width: 14rem; padding: 0.6rem 0.7rem; background: rgba(255, 255, 255, 0.9); border-radius: 6px; pointer-events: auto; font-size: 0.85rem; }
+#biome-inspector .biome-inspector-head { display: flex; align-items: center; gap: 0.4rem; }
+#biome-inspector .biome-inspector-swatch { width: 0.9rem; height: 0.9rem; border-radius: 50%; border: 1px solid rgba(0, 0, 0, 0.3); }
+#biome-inspector .biome-inspector-title { flex: 1; font-weight: 600; }
+#biome-inspector dl { display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.6rem; margin: 0.4rem 0; }
+#biome-inspector dt { color: #555; }
+#biome-inspector dd { margin: 0; }
+#biome-inspector .biome-inspector-bar { display: inline-block; vertical-align: middle; width: 5rem; height: 0.55rem; margin-right: 0.4rem; background: #ddd; border-radius: 3px; overflow: hidden; }
+#biome-inspector .biome-inspector-fill { display: block; height: 100%; background: #4caf50; }
+#biome-inspector.is-dead { opacity: 0.85; }
+#biome-inspector.is-dead .biome-inspector-title { color: #b71c1c; }
