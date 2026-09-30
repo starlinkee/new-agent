@@ -188,6 +188,34 @@ test.describe("poll store and handler with an injected clock", () => {
     expect(events.filter((e) => e.type === "vote")).toHaveLength(2);
   });
 
+  test("closed poll returns 409 (10 s duration)", async () => {
+    const poll = await (await api.post("/api/polls", { data: { question: "q", options: ["a", "b"], durationSec: 10 } })).json();
+    expect((await api.post(`/api/polls/${poll.id}/vote`, { data: { option: 0 } })).status()).toBe(200);
+    clock += 9999;
+    expect((await api.post(`/api/polls/${poll.id}/vote`, { data: { option: 1 } })).status()).toBe(200);
+    clock += 1;
+    const res = await api.post(`/api/polls/${poll.id}/vote`, { data: { option: 0 } });
+    expect(res.status()).toBe(409);
+    expect(await res.json()).toEqual({ error: "poll closed" });
+  });
+
+  test("expiry uses the monotonic clock: a wall clock stepping backwards does not reopen a poll", () => {
+    let wall = 1_700_000_000_000;
+    let tick = 0;
+    const s = new PollStore({ now: () => wall, elapsed: () => tick });
+    const poll = s.create({ question: "q", options: ["a", "b"], durationSec: 10 });
+    expect(poll.closesAt).toBe(new Date(wall + 10000).toISOString());
+    tick += 9999;
+    wall -= 5000;
+    expect(s.vote(poll.id, "c1", 0).total).toBe(1);
+    tick += 501;
+    wall += 5500;
+    expect(() => s.vote(poll.id, "c1", 1)).toThrow("poll closed");
+    wall -= 60000;
+    expect(() => s.vote(poll.id, "c1", 1)).toThrow("poll closed");
+    expect(s.get(poll.id).tallies).toEqual([1, 0]);
+  });
+
   test("other /api/polls paths fall through; store keeps at most 500 polls", async () => {
     const poll = store.create({ question: "q", options: ["a", "b"] });
     expect((await api.get(`/api/polls/${poll.id}/events`)).status()).toBe(418);
