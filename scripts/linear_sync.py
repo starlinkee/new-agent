@@ -47,7 +47,12 @@ Doctor runs, the attempt history, and for a ticket without a PR the worker's Con
 Linear state type to its own state ("started" would be re-run as an orphan,
 "unstarted" would be picked up again), so "completed" is the only safe type.
 
-Usage: linear_sync.py [--once] [--dry-run] [--interval 60]
+Rounds are event-driven: between them the loop probes GitHub (conditional GETs, free on 304)
+and Linear (one tiny query) and starts the next round as soon as a PR, the master tests or a
+ticket changed. The heartbeat (--interval while something is in flight, --idle-interval
+otherwise) only covers what is time-based: grace periods, waiting for a jury run to show up.
+
+Usage: linear_sync.py [--once] [--dry-run] [--interval 60] [--idle-interval 300]
 Env:   LINEAR_API_KEY (required), GH_REPO (default starlinkee/new-agent),
        LINEAR_PROJECT_URL (default: project_url in .contrabass/WORKFLOW.md)
 """
@@ -57,10 +62,12 @@ import glob
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
-import urllib.error
+import http.client
+import urllib.parse
 import urllib.request
 
 REPO = os.environ.get("GH_REPO", "starlinkee/new-agent")
@@ -81,6 +88,9 @@ NEEDS_HUMAN = "needs-human"  # label: the doctor gave up on the PR
 # The jury's verdict marker, see .github/scripts/verdict.py; keep the two in sync.
 VERDICT_RE = re.compile(r"<!-- ai-jury verdict=(APPROVED|REJECTED) sha=([0-9a-f]{40}) -->")
 DOCTOR_HEADER = "**AI Merge Doctor (Opus)**"  # first line of every doctor comment (run_merge_doctor.py)
+JURY_NO_VERDICT = "**AI jury: no verdict**"  # first words of the jury's no-verdict comment (run_jury.py)
+# A doctor or jury run that found the Claude quota used up says when it is back, see claude_cli.limit_marker.
+LIMIT_RE = re.compile(r"<!-- ai-usage-limit until=(\d+) -->")
 # Lines of a "## Flaky tests" section, as WORKFLOW.md and the doctor prompt ask for them:
 #   - tests/<file>.spec.js: "<test title>": <what happened>
 FLAKY_RE = re.compile(r"^\s*[-*]\s*`?(tests/[\w./-]+\.spec\.js)`?\s*:?\s*(.*)$", re.M)
@@ -93,6 +103,21 @@ AUTO_MERGE = os.environ.get("AUTO_MERGE", "1") != "0"
 STATE_FILE = os.path.expanduser("~/.cb-linear-sync.json")
 HEALTH_FILE = os.path.expanduser("~/.cb-linear-sync.health")  # mtime = last fully successful round
 WATCHDOG_MIN = 10  # no successful round for this long = shout in the log and in `cb status`
+# Between rounds the loop does not just sleep: it watches for changes (see wait_for_change), so a
+# jury verdict, a merge or a person moving a ticket is handled within seconds, not on the next tick.
+PROBE_GH_SEC = 15  # conditional GitHub GETs: a 304 is free, so this can be frequent
+PROBE_LINEAR_SEC = 30  # one tiny Linear query; Linear's request quota is the scarce one
+PROBE_TICK = 5
+IDLE_INTERVAL = 300  # heartbeat while nothing is in flight (nothing time-based can be due)
+# GitHub resources whose change starts a round: any PR event (opened, pushed, labeled, commented -
+# the jury verdict is a comment -, merged, closed) and the master test result.
+WATCHED = {
+    "pull requests": "repos/{repo}/pulls?state=open&per_page=100",
+    "master tests": f"repos/{{repo}}/actions/workflows/master-tests.yml/runs?branch={MASTER}&per_page=10",
+}
+LINEAR_STAMP = None  # newest ticket update seen at the start of the last round
+ORPHAN_EVERY = 120  # seconds between orphan sweeps (see reap_orphans)
+ORPHAN_CHECKED = 0.0
 LOOKUP_FAILS = 0  # lookups that failed in the current round
 KEY = os.environ.get("LINEAR_API_KEY", "")
 
@@ -115,21 +140,73 @@ def project_slug():
 PROJECT_SLUG = project_slug()
 
 
+# WSL's network sometimes loses the first SYNs of a connection; Linux then retransmits at 1, 2, 4, 8
+# and 16 s, so one unlucky connect stalls for ~31 s (a `gh` call there took 30-60 s, and every
+# ticket paid it). So: reuse connections, and give up on a connect attempt after a few seconds -
+# a fresh socket usually connects at once.
+CONNECT_TIMEOUT = 4
+CONNECT_ATTEMPTS = 5
+READ_TIMEOUT = 40
+CONNS = {}  # host -> an idle keep-alive connection (the loop is single-threaded)
+
+
+def connect(host):
+    err = None
+    for _ in range(CONNECT_ATTEMPTS):
+        conn = http.client.HTTPSConnection(host, timeout=CONNECT_TIMEOUT)
+        try:
+            conn.connect()
+        except OSError as e:
+            err = e
+            conn.close()
+            continue
+        conn.sock.settimeout(READ_TIMEOUT)
+        return conn
+    raise OSError(f"cannot connect to {host}: {err}")
+
+
+def http_request(method, url, headers, body=None, reuse=True):
+    """(status, response headers, body bytes). Never raises for an HTTP error status.
+
+    A reused connection the server has closed meanwhile is replaced and the request repeated
+    once (it failed before the server saw it). With reuse=False the request always gets a
+    fresh connection and is never repeated: for merges and dispatches, which must not run twice.
+    """
+    u = urllib.parse.urlsplit(url)
+    target = u.path + ("?" + u.query if u.query else "")
+    for attempt in (0, 1):
+        conn = CONNS.pop(u.netloc, None) if reuse else None
+        fresh = conn is None
+        if fresh:
+            conn = connect(u.netloc)
+        try:
+            conn.request(method, target, body=body, headers=headers)
+            r = conn.getresponse()
+            data = r.read()
+        except (OSError, http.client.HTTPException):
+            conn.close()
+            if fresh or not reuse or attempt == 1:
+                raise
+            continue
+        if reuse and not r.will_close:
+            CONNS[u.netloc] = conn
+        else:
+            conn.close()
+        return r.status, r.headers, data
+
+
 def gql(query, variables=None):
-    req = urllib.request.Request(
-        "https://api.linear.app/graphql",
-        data=json.dumps({"query": query, "variables": variables or {}}).encode(),
-        headers={"Authorization": KEY, "Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=40) as r:
-            data = json.load(r)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode(errors="replace")
+    status, _, raw = http_request(
+        "POST", "https://api.linear.app/graphql",
+        {"Authorization": KEY, "Content-Type": "application/json"},
+        json.dumps({"query": query, "variables": variables or {}}).encode())
+    if status >= 400:
+        body = raw.decode(errors="replace")
         # Linear reports its hourly request limit as a 400 with code RATELIMITED.
         if "RATELIMITED" in body:
-            raise RateLimited("Linear: " + body[:200]) from None
-        raise RuntimeError(f"Linear HTTP {e.code}: {body[:300]}") from None
+            raise RateLimited("Linear: " + body[:200])
+        raise RuntimeError(f"Linear HTTP {status}: {body[:300]}")
+    data = json.loads(raw)
     if data.get("errors"):
         raise RuntimeError(data["errors"][0]["message"])
     return data["data"]
@@ -228,12 +305,165 @@ def cb_activity():
         return None
 
 
+def reap_orphans(dry):
+    """Kill omc workers whose worktree Contrabass already deleted.
+
+    Contrabass removes the workspace when a run ends but leaves the `omc team` tmux session
+    and its claude worker alive; they idle in a deleted directory and hold a session open.
+    """
+    global ORPHAN_CHECKED
+    if time.time() - ORPHAN_CHECKED < ORPHAN_EVERY or not os.path.isdir("/proc"):
+        return
+    ORPHAN_CHECKED = time.time()
+    root = os.path.join(REPO_DIR, "workspaces")
+    try:
+        out = subprocess.run(["tmux", "ls", "-F", "#{session_name}"], capture_output=True, text=True, timeout=10)
+        for name in out.stdout.split():
+            # omc-team-<first 30 chars of the ticket uuid>-<suffix>; the workspace dir is the full uuid
+            m = re.match(r"omc-team-([0-9a-f-]{30})-", name)
+            if m and not glob.glob(os.path.join(root, m.group(1) + "*")):
+                log(f"orphan tmux session {name}: workspace is gone" + (" (dry run)" if dry else ", killing"))
+                if not dry:
+                    subprocess.run(["tmux", "kill-session", "-t", name], capture_output=True, timeout=10)
+        for pid in filter(str.isdigit, os.listdir("/proc")):
+            try:
+                cwd = os.readlink(f"/proc/{pid}/cwd")
+            except OSError:
+                continue
+            if not (cwd.startswith(root + os.sep) and cwd.endswith(" (deleted)")) or int(pid) == os.getpid():
+                continue
+            ticket = cwd[len(root) + 1:].split(os.sep)[0].removesuffix(" (deleted)")
+            # a recreated workspace leaves stale "(deleted)" cwds behind; only a dir that is gone means orphan
+            if not os.path.isdir(os.path.join(root, ticket)):
+                log(f"orphan process {pid} runs in deleted {cwd[:-10]}" + (" (dry run)" if dry else ", killing"))
+                if not dry:
+                    os.kill(int(pid), signal.SIGTERM)
+    except Exception as e:  # housekeeping only; never fail a round over it
+        log(f"orphan cleanup failed: {e}")
+
+
 MERGED = set()  # a merged branch never changes again; do not ask GitHub twice
 ROUND = {}  # branch -> its PRs, cached for one round
+ETAGS = {}  # url -> (etag, parsed body), kept across rounds
+GH_TOKEN = None
+
+
+def gh_token():
+    global GH_TOKEN
+    if GH_TOKEN is None:
+        try:
+            GH_TOKEN = subprocess.run(["gh", "auth", "token"], capture_output=True, text=True,
+                                      timeout=30).stdout.strip()
+        except Exception:
+            GH_TOKEN = ""
+    return GH_TOKEN
+
+
+def api_url(path):
+    return "https://api.github.com/" + path.format(repo=REPO)
 
 
 def api(path):
-    return json.loads(gh("api", path.format(repo=REPO)) or "null")
+    """GET a GitHub REST path as JSON, cached by ETag across rounds.
+
+    An unchanged resource answers 304, which GitHub does not count against the rate limit,
+    and it needs no `gh` process. That makes asking again every round (and polling for
+    changes, see api_moved) practically free. Without a token it falls back to `gh api`.
+    """
+    token = gh_token()
+    if not token:
+        return json.loads(gh("api", path.format(repo=REPO)) or "null")
+    url = api_url(path)
+    etag, body = ETAGS.get(url, (None, None))
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+               "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "linear-sync"}
+    if etag:
+        headers["If-None-Match"] = etag
+    for attempt in range(3):
+        try:
+            status, resp, raw = http_request("GET", url, headers)
+        except (OSError, http.client.HTTPException) as e:
+            if attempt == 2:
+                raise RuntimeError(f"GitHub request failed for {url}: {e}") from None
+            time.sleep(1)
+            continue
+        if status == 304 and etag:
+            return body
+        if status < 300:
+            data = json.loads(raw)
+            ETAGS[url] = (resp.get("ETag"), data)
+            return data
+        text = raw.decode(errors="replace")
+        if status in (403, 429) and "rate limit" in text.lower():
+            raise RateLimited(f"GitHub: {text[:200]}")
+        if status < 500 or attempt == 2:
+            raise RuntimeError(f"GitHub HTTP {status} for {url}: {text[:200]}")
+        time.sleep(3)
+
+
+def api_send(method, path, body=None):
+    """POST/PUT/DELETE to the GitHub REST API. Not retried: a merge or a dispatch must not run twice.
+
+    `gh` from WSL sometimes stalls for 30-60 s on a trivial call, and these are the calls the
+    pipeline waits on (merge, label the doctor, start the jury), so they go direct as well.
+    """
+    url = api_url(path)
+    try:
+        status, _, raw = http_request(
+            method, url,
+            {"Authorization": f"Bearer {gh_token()}", "Accept": "application/vnd.github+json",
+             "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json",
+             "User-Agent": "linear-sync"},
+            None if body is None else json.dumps(body).encode(), reuse=False)
+    except (OSError, http.client.HTTPException) as e:
+        raise RuntimeError(f"GitHub request failed for {method} {url}: {e}") from None
+    if status >= 400:
+        text = raw.decode(errors="replace")
+        if status in (403, 429) and "rate limit" in text.lower():
+            raise RateLimited(f"GitHub: {text[:200]}")
+        raise RuntimeError(f"GitHub HTTP {status} for {method} {url}: {text[:200]}")
+    return json.loads(raw) if raw else None
+
+
+def merge_pr(num, head, branch):
+    """Squash-merge exactly the reviewed commit (anything pushed after the verdict makes it fail)."""
+    if not gh_token():
+        return gh("pr", "merge", str(num), "--repo", REPO, "--squash", "--delete-branch",
+                  "--match-head-commit", head)
+    api_send("PUT", f"repos/{{repo}}/pulls/{num}/merge", {"merge_method": "squash", "sha": head})
+    try:
+        api_send("DELETE", f"repos/{{repo}}/git/refs/heads/{branch}")
+    except RuntimeError as e:  # the merge stands; a leftover branch is harmless
+        log(f"{branch}: merged, but could not delete the branch: {e}")
+
+
+def add_label(num, label):
+    if not gh_token():
+        return gh("issue", "edit", str(num), "--repo", REPO, "--add-label", label)
+    api_send("POST", f"repos/{{repo}}/issues/{num}/labels", {"labels": [label]})
+
+
+def remove_label(num, label):
+    """Raises when the label is not on the issue; callers that do not care catch it."""
+    if not gh_token():
+        return gh("issue", "edit", str(num), "--repo", REPO, "--remove-label", label)
+    api_send("DELETE", f"repos/{{repo}}/issues/{num}/labels/{urllib.parse.quote(label)}")
+
+
+def dispatch_jury(ref, num):
+    """workflow_dispatch runs the workflow and its scripts from `ref` (the base branch)."""
+    if not gh_token():
+        return gh("workflow", "run", "ai-jury.yml", "--repo", REPO, "--ref", ref, "-f", f"pr={num}")
+    api_send("POST", "repos/{repo}/actions/workflows/ai-jury.yml/dispatches",
+             {"ref": ref, "inputs": {"pr": str(num)}})
+
+
+def api_moved(path):
+    """True when the resource changed since api() last fetched it. Costs a 304 when it did not."""
+    url = api_url(path)
+    before = ETAGS.get(url, (None, None))[0]
+    api(path)
+    return ETAGS.get(url, (None, None))[0] != before
 
 
 def branch_prs(branch):
@@ -284,6 +514,7 @@ def pr_info(branch):
     commits = api(f"repos/{{repo}}/pulls/{num}/commits?per_page=100")
     head_at = max((c["commit"]["committer"]["date"] for c in commits), default="")
     verdict, verdict_body, doctor_notes = None, "", []
+    doctor_limit = jury_limit = 0  # the quota is back at this time; 0: the last run was not stopped by it
     for c in api(f"repos/{{repo}}/issues/{num}/comments?per_page=100"):
         body = c["body"] or ""
         if not c["user"]["login"].startswith("github-actions"):
@@ -294,12 +525,18 @@ def pr_info(branch):
             verdict, verdict_body = m.group(1), body
         elif body.startswith(DOCTOR_HEADER):
             doctor_notes.append(body)
+            lm = LIMIT_RE.search(body)
+            doctor_limit = int(lm.group(1)) if lm else 0
+        elif body.startswith(JURY_NO_VERDICT) and f"`{head[:7]}`" in body:
+            lm = LIMIT_RE.search(body)
+            jury_limit = int(lm.group(1)) if lm else 0
     mergeable = {True: "MERGEABLE", False: "CONFLICTING"}.get(pr["mergeable"])
     if mergeable is None:  # GitHub still has not decided (can take hours): ask git itself
         mergeable = local_mergeable(pr["base"]["ref"], branch)
     return {"status": "open", "number": num, "mergeable": mergeable, "head": head,
             "head_at": head_at, "branch": branch, "base": pr["base"]["ref"], "verdict": verdict,
             "verdict_body": verdict_body, "body": pr["body"] or "", "doctor_notes": doctor_notes,
+            "doctor_limit": doctor_limit, "jury_limit": jury_limit,
             "labels": {label["name"] for label in pr["labels"]}}
 
 
@@ -345,10 +582,12 @@ def forget(ident, memory):
 
 
 def recent_runs(workflow, title, n=3):
-    """The newest runs of `workflow` with this run-name (url, status, conclusion, createdAt)."""
-    runs = json.loads(gh("run", "list", "--repo", REPO, "--workflow", workflow, "--limit", "50",
-                         "--json", "displayTitle,status,conclusion,createdAt,url") or "[]")
-    return [r for r in runs if r["displayTitle"] == title][:n]
+    """The newest runs of `workflow` with this run-name (html_url, status, conclusion, created_at)."""
+    return [r for r in workflow_runs(workflow, 50) if r["display_title"] == title][:n]
+
+
+def workflow_runs(workflow, n):
+    return api(f"repos/{{repo}}/actions/workflows/{workflow}/runs?per_page={n}")["workflow_runs"]
 
 
 def cb_events(issue_id, n=25):
@@ -382,7 +621,7 @@ def park_details(issue, info, memory):
                                       ("Merge Doctor", "merge-doctor.yml", f"Merge Doctor PR #{num}")):
             runs = recent_runs(workflow, title)
             out.append(f"**Last {name} runs on #{num}:** " + (", ".join(
-                f"[{r['conclusion'] or r['status']} {r['createdAt'][:16].replace('T', ' ')}]({r['url']})"
+                f"[{r['conclusion'] or r['status']} {r['created_at'][:16].replace('T', ' ')}]({r['html_url']})"
                 for r in runs) or "none"))
     history = []
     if info.get("head"):
@@ -553,7 +792,7 @@ def unpark(issue, memory, dry):
             {"i": issue["id"], "l": human_label(issue["team"]["id"])})
     for p in branch_prs("symphony/" + ident.lower()):
         if p["state"] == "open" and any(label["name"] == NEEDS_HUMAN for label in p["labels"]):
-            gh("issue", "edit", str(p["number"]), "--repo", REPO, "--remove-label", NEEDS_HUMAN)
+            remove_label(p["number"], NEEDS_HUMAN)
     ROUND.pop("symphony/" + ident.lower(), None)  # labels changed; look the PR up again
 
 
@@ -563,9 +802,8 @@ def wait_for_blockers(issue, waiting, states, dry):
 
 def workflow_running(workflow, title):
     """True while a run of `workflow` with this run-name is queued or in progress."""
-    runs = json.loads(gh("run", "list", "--repo", REPO, "--workflow", workflow,
-                         "--limit", "30", "--json", "status,displayTitle") or "[]")
-    return any(r["displayTitle"] == title and r["status"] != "completed" for r in runs)
+    return any(r["display_title"] == title and r["status"] != "completed"
+               for r in workflow_runs(workflow, 30))
 
 
 def retrigger_jury(issue, info, states, memory, dry):
@@ -591,14 +829,35 @@ def retrigger_jury(issue, info, states, memory, dry):
         return  # just dispatched; the run may not be listed yet
     if workflow_running("ai-jury.yml", f"AI Jury PR #{num}"):
         return
+    if wait_for_quota(rec, info["jury_limit"], ident, "jury"):
+        return
     if rec["n"] >= MAX_JURY:
         park(issue, states, memory, dry,
              f"PR #{num}: the AI jury gave no verdict for head {head[:7]} in {rec['n']} runs (see the ai-jury runs)", info)
         return
     log(f"{ident}: no jury verdict for head {head[:7]}, starting the jury on PR #{num} (run {rec['n'] + 1})")
-    memory[key] = {"head": head, "n": rec["n"] + 1, "at": time.time()}
+    memory[key] = {**rec, "head": head, "n": rec["n"] + 1, "at": time.time()}
     if not dry:
-        gh("workflow", "run", "ai-jury.yml", "--repo", REPO, "--ref", info["base"], "-f", f"pr={num}")
+        dispatch_jury(info["base"], num)
+
+
+def wait_for_quota(rec, until, ident, what):
+    """True while the last `what` run was stopped by the Claude usage limit and the quota is not back.
+
+    Such a run is no attempt: once the quota is back, its count is given back (once per limit
+    time, so a run that never starts still counts) and the retry starts at once. The caller
+    stores `rec` again when this changes it.
+    """
+    if not until:
+        return False
+    if time.time() < until:
+        log(f"{ident}: {what} waits for the Claude usage limit to reset "
+            f"({dt.datetime.fromtimestamp(until, dt.timezone.utc):%Y-%m-%d %H:%M} UTC)")
+        return True
+    if rec.get("limit") != until:
+        rec["n"] = max(rec["n"] - 1, 0)
+        rec["limit"] = until
+    return False
 
 
 def call_doctor(issue, info, states, memory, dry):
@@ -618,21 +877,24 @@ def call_doctor(issue, info, states, memory, dry):
         return  # label just added; the run is not listed yet
     if since < DOCTOR_MAX_MIN * 60 and workflow_running("merge-doctor.yml", f"Merge Doctor PR #{num}"):
         return
+    if wait_for_quota(rec, info["doctor_limit"], ident, "Merge Doctor"):
+        memory[key] = rec  # the refund
+        return
     if rec["n"] >= MAX_DOCTOR:
         park(issue, states, memory, dry, f"PR #{num}: conflicts/jury rejection, Merge Doctor ran {rec['n']} times (the limit) and it still is not mergeable", info)
         return
     log(f"{ident}: PR #{num} needs the Merge Doctor (attempt {rec['n'] + 1})")
-    memory[key] = {"n": rec["n"] + 1, "at": time.time()}
+    memory[key] = {**rec, "n": rec["n"] + 1, "at": time.time()}
     if not dry:
-        # gh issue edit, not gh pr edit: the latter fails on the Projects (classic) deprecation
-        for op in ("--remove-label", "--add-label"):
-            try:
-                gh("issue", "edit", str(num), "--repo", REPO, op, NEEDS_DOCTOR)
-            except RateLimited:
-                raise
-            except Exception:  # removing a label that is not there fails; harmless
-                if op == "--add-label":
-                    raise
+        # The issues endpoints, not the PR ones: `gh pr edit` fails on the Projects (classic) deprecation.
+        # Remove then add, so the `labeled` event fires even when the label was left behind.
+        try:
+            remove_label(num, NEEDS_DOCTOR)
+        except RateLimited:
+            raise
+        except Exception:  # removing a label that is not there fails; harmless
+            pass
+        add_label(num, NEEDS_DOCTOR)
 
 
 def handle_open_pr(issue, info, states, memory, dry, fix):
@@ -654,8 +916,7 @@ def handle_open_pr(issue, info, states, memory, dry, fix):
         log(f"{ident}: jury APPROVED {info['head'][:7]}, merging PR #{num}")
         if not dry:
             # Exactly the reviewed commit: anything pushed after the verdict makes this fail.
-            gh("pr", "merge", str(num), "--repo", REPO, "--squash", "--delete-branch",
-               "--match-head-commit", info["head"])
+            merge_pr(num, info["head"], info["branch"])
         set_state(issue, "Done", states, dry, f"PR #{num} merged")
         forget(ident, memory)
         try:
@@ -679,9 +940,7 @@ def master_health(team_id, states, memory, dry):
     merging more on top would bury the cause. So on red: pause, and queue one fix ticket.
     """
     try:
-        runs = json.loads(gh("run", "list", "--repo", REPO, "--workflow", "master-tests.yml",
-                             "--branch", MASTER, "--limit", "10",
-                             "--json", "headSha,status,conclusion,url") or "[]")
+        runs = api(WATCHED["master tests"])["workflow_runs"]
     except RateLimited:
         raise
     except Exception as e:
@@ -697,7 +956,7 @@ def master_health(team_id, states, memory, dry):
         return None
     if rec:
         return rec["ident"]
-    sha = last["headSha"][:7]
+    sha = last["head_sha"][:7]
     title = f"Fix failing tests on master ({sha})"
     log(f"master tests FAIL at {sha}: pausing auto-merge, queueing '{title}'")
     if dry:
@@ -709,7 +968,7 @@ def master_health(team_id, states, memory, dry):
         pid = gql("""query($s:String!){projects(filter:{slugId:{eq:$s}}){nodes{id}}}""",
                   {"s": PROJECT_SLUG})["projects"]["nodes"][0]["id"]
         desc = (
-            f"**Goal.** `npm run test:ai` fails on `{MASTER}` at `{sha}` ({last['url']}). Make it pass again.\n\n"
+            f"**Goal.** `npm run test:ai` fails on `{MASTER}` at `{sha}` ({last['html_url']}). Make it pass again.\n\n"
             "**Scope**\n\n* Find the cause, most likely two recently merged PRs that each passed alone but "
             f"break together (`git log origin/{MASTER}`). Fix the code; never delete, skip or weaken tests.\n\n"
             f"**Acceptance:** `npm run test:ai` passes on this branch merged with `{MASTER}`.\n\n---\n\n"
@@ -721,7 +980,7 @@ def master_health(team_id, states, memory, dry):
             {"i": {"teamId": team_id, "projectId": pid, "stateId": states["Todo"], "priority": 1,
                    "title": title, "description": desc}},
         )["issueCreate"]["issue"]["identifier"]
-    memory["master_red"] = {"ident": ident, "sha": last["headSha"]}
+    memory["master_red"] = {"ident": ident, "sha": last["head_sha"]}
     return ident
 
 
@@ -790,16 +1049,37 @@ def promote_unblocked(states, memory, dry):
             set_state(issue, "Todo", states, dry, f"unblocked ({names} merged)")
 
 
+def linear_stamp():
+    """When the project's newest ticket changed: one tiny query, the change detector for Linear."""
+    nodes = gql("""query($f:IssueFilter){issues(first:1,orderBy:updatedAt,filter:$f){nodes{updatedAt}}}""",
+                {"f": {"project": {"slugId": {"eq": PROJECT_SLUG}}}})["issues"]["nodes"]
+    return nodes[0]["updatedAt"] if nodes else ""
+
+
+def in_flight(tickets, open_branches):
+    """True while something time-based can come due: a PR to review, a run, a redo grace period."""
+    for t in tickets:
+        cur, branch = t["state"]["name"], "symphony/" + t["identifier"].lower()
+        if cur in ("In Progress", "In Review") or (cur == "Todo" and branch in open_branches):
+            return True
+        if cur == "Done" and not is_merged(branch):
+            return True
+    return False
+
+
 def reconcile(dry):
-    global LOOKUP_FAILS
+    """One pass over the project. Returns True while something is in flight (see in_flight)."""
+    global LOOKUP_FAILS, LINEAR_STAMP
     LOOKUP_FAILS = 0
     ROUND.clear()
+    LINEAR_STAMP = linear_stamp()  # taken first: a change during the round starts the next one
     team_id, states = get_states()
     ensure_in_review(team_id, states, dry)
+    reap_orphans(dry)
     memory = load_state()
     try:
         activity = cb_activity()
-        open_branches = {p["head"]["ref"] for p in api("repos/{repo}/pulls?state=open&per_page=100")}
+        open_branches = {p["head"]["ref"] for p in api(WATCHED["pull requests"])}
         fix = master_health(team_id, states, memory, dry)
         since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=DONE_DAYS)).isoformat()
         tickets = (issues({"state": {"name": {"in": ["Todo", "In Progress", "In Review"]}}})
@@ -813,17 +1093,19 @@ def reconcile(dry):
                 log(f"{issue['identifier']}: {e}")
                 LOOKUP_FAILS += 1
         promote_unblocked(states, memory, dry)
+        return in_flight(tickets, open_branches)
     finally:
         if not dry:
             save_state(memory)
 
 
-def mark_round(ok, last_ok):
+def mark_round(ok, last_ok, dry=False):
     """Health heartbeat: a round only counts when Linear and every GitHub lookup worked."""
     now = time.time()
     if ok:
-        with open(HEALTH_FILE, "w") as f:
-            f.write("ok")
+        if not dry:  # a dry run must not make a dead reconciler look healthy
+            with open(HEALTH_FILE, "w") as f:
+                f.write("ok")
         return now
     if now - last_ok > WATCHDOG_MIN * 60:
         log(f"WATCHDOG: no successful round for {int((now - last_ok) / 60)} min - "
@@ -831,29 +1113,68 @@ def mark_round(ok, last_ok):
     return last_ok
 
 
+def wait_for_change(seconds):
+    """Sleep up to `seconds`, waking early - and saying why - when GitHub or Linear moved.
+
+    GitHub is probed with conditional GETs (a 304 costs no quota), Linear with one tiny
+    query, so reacting within seconds costs about the same as the fixed sleep it replaces.
+    Returns the reason, or None when the time simply ran out.
+    """
+    start = time.time()
+    end = start + seconds
+    next_gh, next_linear = start + PROBE_GH_SEC, start + PROBE_LINEAR_SEC
+    while time.time() < end:
+        now = time.time()
+        try:
+            if now >= next_gh:
+                next_gh = now + PROBE_GH_SEC
+                for name, path in WATCHED.items():
+                    if api_moved(path):
+                        return f"{name} changed on GitHub"
+            if now >= next_linear:
+                next_linear = now + PROBE_LINEAR_SEC
+                if LINEAR_STAMP is not None and linear_stamp() != LINEAR_STAMP:
+                    return "a ticket changed in Linear"
+        except RateLimited:
+            return "rate limited while probing"  # the round reports it and backs off
+        except Exception as e:  # a probe hiccup only costs the early wake-up; the heartbeat covers it
+            log(f"probe failed: {e}")
+        time.sleep(min(PROBE_TICK, max(0.0, end - time.time())))
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--interval", type=int, default=60)
+    ap.add_argument("--interval", type=int, default=60,
+                    help="heartbeat in seconds while something is in flight")
+    ap.add_argument("--idle-interval", type=int, default=IDLE_INTERVAL,
+                    help="heartbeat in seconds while nothing is in flight")
     a = ap.parse_args()
     if not KEY:
         sys.exit("LINEAR_API_KEY is not set")
     last_ok = time.time()
     while True:
-        ok, wait = False, a.interval
+        ok, wait, busy = False, a.interval, True
         try:
-            reconcile(a.dry_run)
+            busy = reconcile(a.dry_run)
             ok = LOOKUP_FAILS == 0
+            wait = a.interval if busy or not ok else a.idle_interval
         except RateLimited as e:
             log(f"rate limit hit ({e}); sleeping {RATE_LIMIT_SLEEP}s")
             wait = RATE_LIMIT_SLEEP
         except Exception as e:
             log(f"sync error: {e}")
-        last_ok = mark_round(ok, last_ok)
+        last_ok = mark_round(ok, last_ok, a.dry_run)
         if a.once:
             return
-        time.sleep(wait)
+        if wait == RATE_LIMIT_SLEEP:
+            time.sleep(wait)  # probing would only burn more quota
+        else:
+            why = wait_for_change(wait)
+            if why:
+                log(f"waking early: {why}")
 
 
 if __name__ == "__main__":

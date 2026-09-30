@@ -44,6 +44,12 @@ jobs:
         with:
           node-version: '22'
       - run: npm install -g @anthropic-ai/claude-code
+      # Restore only: the doctor runs the PR's code; master-tests.yml is what saves this cache.
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pr/package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
       - name: Install dependencies and browser for the test suite
         working-directory: pr
         run: |
