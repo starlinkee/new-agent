@@ -73,12 +73,19 @@ export function zonedToUtc(date, minuteOfDay, timeZone) {
   return new Date(Math.min(...valid));
 }
 
-function isValidTimeZone(timeZone) {
+// The canonical IANA name for `timeZone`, or null when Intl rejects it. Nothing is cached on the raw input,
+// so case variants like "europe/warsaw" cannot grow the formatter cache (keyed by canonical names only).
+function canonicalTimeZone(timeZone) {
   try {
-    formatterFor(timeZone);
-    return true;
+    return new Intl.DateTimeFormat("en-US", { timeZone }).resolvedOptions().timeZone;
   } catch {
-    return false;
+    return null;
+  }
+}
+
+function assertObjectBody(body) {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    throw badRequest("body must be a JSON object");
   }
 }
 
@@ -89,6 +96,7 @@ function formatTime(minuteOfDay) {
 }
 
 export function validateCreate(body) {
+  assertObjectBody(body);
   const { title, dates, startMinute, endMinute, timezone } = body;
   if (typeof title !== "string" || title.trim() === "" || title.trim().length > MAX_TITLE_LENGTH) {
     throw badRequest(`title must be a string of 1-${MAX_TITLE_LENGTH} characters`);
@@ -109,15 +117,14 @@ export function validateCreate(body) {
   if (!isSlotBoundary(endMinute) || endMinute > 1440 || endMinute <= startMinute) {
     throw badRequest(`endMinute must be a multiple of ${SLOT_MINUTES} after startMinute and at most 1440`);
   }
-  if (timezone !== undefined && (typeof timezone !== "string" || !isValidTimeZone(timezone))) {
-    throw badRequest("timezone must be an IANA time zone name");
-  }
+  const zone = timezone === undefined ? "UTC" : typeof timezone === "string" ? canonicalTimeZone(timezone) : null;
+  if (zone === null) throw badRequest("timezone must be an IANA time zone name");
   return {
     title: title.trim(),
     dates: [...dates].sort(),
     startMinute,
     endMinute,
-    timezone: timezone ?? "UTC",
+    timezone: zone,
   };
 }
 
@@ -315,6 +322,7 @@ async function route(store, req, res, match, clientId, headers) {
   if (req.method === "PUT") {
     if (!store.get(id)) throw new HttpError(404, "event not found");
     const body = await readJson(req, { maxBytes: MAX_BODY_BYTES });
+    assertObjectBody(body);
     const event = store.respond(id, clientId, { name: body.name, slots: body.slots });
     return send(res, 200, { ...event, me: store.participantOf(id, clientId) }, headers);
   }

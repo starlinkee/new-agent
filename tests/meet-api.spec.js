@@ -39,6 +39,27 @@ test.describe("meet API", () => {
     expect(event.slots[0].start).toBe("2030-07-01T09:00:00.000Z");
   });
 
+  test("timezone is stored under its canonical IANA name", async ({ request }) => {
+    const res = await request.post("/api/meet", { data: newEvent({ timezone: "europe/warsaw" }) });
+    expect(res.status()).toBe(201);
+    const event = await res.json();
+    expect(event.timezone).toBe("Europe/Warsaw");
+    expect(event.slots[0].start).toBe("2030-07-01T07:00:00.000Z");
+  });
+
+  test("non-object JSON bodies are 400, not 500", async ({ request }) => {
+    const event = await (await request.post("/api/meet", { data: newEvent() })).json();
+    const json = { "content-type": "application/json" };
+    for (const raw of ["null", "[]", "42", '"x"']) {
+      const create = await request.post("/api/meet", { data: raw, headers: json });
+      expect(create.status(), raw).toBe(400);
+      expect((await create.json()).error).toBe("body must be a JSON object");
+      const put = await request.put(`/api/meet/${event.id}/availability`, { data: raw, headers: json });
+      expect(put.status(), raw).toBe(400);
+      expect((await put.json()).error).toBe("body must be a JSON object");
+    }
+  });
+
   test("invalid create input is rejected with 400 naming the field", async ({ request }) => {
     const cases = [
       [{ title: "   " }, "title"],
