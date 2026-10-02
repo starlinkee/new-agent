@@ -7,6 +7,7 @@ import { renderPollsPage } from "./polls-page.js";
 import { renderBlobsPage } from "./blobs-page.js";
 import { renderPulsePage } from "./pulse-page.js";
 import { renderBiomePage } from "./biome-page.js";
+import { renderMeetPage } from "./meet-page.js";
 import { handleVendor } from "./vendor.js";
 import { layout } from "./layout.js";
 import { handleRequest } from "./site.js";
@@ -61,7 +62,7 @@ http
       if (await handleBiome(req, res)) return;
       if (await handleMeet(req, res)) return;
       if (await handleVendor(req, res)) return;
-      await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage, "/polls": renderPollsPage, "/blobs": renderBlobsPage, "/pulse": renderPulsePage, "/biome": renderBiomePage });
+      await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage, "/polls": renderPollsPage, "/blobs": renderBlobsPage, "/pulse": renderPulsePage, "/biome": renderBiomePage, "/meet": renderMeetPage });
     } catch {
       if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "internal error" }));
