@@ -1,0 +1,9 @@
+[data-plugin="best"] { position: relative; margin-top: 1rem; }
+#meet-best h4 { margin: 0 0 0.5rem; }
+.meet-best-list { margin: 0; padding-left: 1.5rem; display: grid; gap: 0.5rem; }
+.meet-best-item { cursor: default; padding: 0.25rem 0.5rem; border-radius: 4px; }
+.meet-best-item:hover, .meet-best-item:focus-visible { background: #f3f4f6; }
+.meet-best-item > span { display: block; font-size: 0.85rem; color: #4b5563; }
+.meet-best-empty { margin: 0; color: #4b5563; }
+.meet-best-overlays { position: absolute; top: 0; left: 0; width: 0; height: 0; pointer-events: none; }
+.meet-best-highlight { position: absolute; box-sizing: border-box; outline: 2px solid #b45309; outline-offset: -2px; background: rgba(245, 158, 11, 0.25); pointer-events: none; }

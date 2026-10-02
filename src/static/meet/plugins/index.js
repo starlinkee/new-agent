@@ -1,4 +1,6 @@
-export const PLUGINS = [];
+import * as best from "./best.js";
+
+export const PLUGINS = [best];
 
 // Mounts every plugin once; a plugin that throws does not stop the others. Returns one cleanup.
 export function mountPlugins(ctx) {
