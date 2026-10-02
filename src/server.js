@@ -26,6 +26,7 @@ import { handleBlobScores } from "./blobs-scores.js";
 import { handleBiome } from "./biome.js";
 import { handleBiomeStream } from "./biome-stream.js";
 import { handleBiomeFood } from "./biome-food.js";
+import { handleMeet } from "./meet.js";
 import { startDefaultBots } from "./blobs-bots.js";
 
 export function renderPage() {
@@ -58,6 +59,7 @@ http
       if (await handleBiomeStream(req, res)) return;
       if (await handleBiomeFood(req, res)) return;
       if (await handleBiome(req, res)) return;
+      if (await handleMeet(req, res)) return;
       if (await handleVendor(req, res)) return;
       await handleRequest(req, res, { "/": renderPage, "/todos": renderTodosPage, "/world": renderWorldPage, "/pixels": renderPixelsPage, "/polls": renderPollsPage, "/blobs": renderBlobsPage, "/pulse": renderPulsePage, "/biome": renderBiomePage });
     } catch {
