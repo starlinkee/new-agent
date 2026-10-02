@@ -31,4 +31,7 @@ ingress:
   - hostname: biome.viktorbobinski.com
     path: ^/(biome|static/.*|vendor/.*|api/biome/.*)?$
     service: http://localhost:3000
+  - hostname: meet.viktorbobinski.com
+    path: ^/(meet|static/.*|api/meet(/.*)?)?$
+    service: http://localhost:3000
   - service: http_status:404

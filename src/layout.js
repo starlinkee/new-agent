@@ -15,7 +15,7 @@ export function layout({ title, body, head = "" }) {
   </head>
   <body>
     <header class="site-header">
-      <nav><a href="/">Home</a> <a id="world-link" href="/world">World</a> <a id="pixels-link" href="/pixels">Pixels</a> <a id="polls-link" href="/polls">Polls</a> <a id="blobs-link" href="/blobs">Blobs</a> <a id="pulse-link" href="/pulse">Pulse</a> <a id="biome-link" href="/biome">Biome</a></nav>
+      <nav><a href="/">Home</a> <a id="world-link" href="/world">World</a> <a id="pixels-link" href="/pixels">Pixels</a> <a id="polls-link" href="/polls">Polls</a> <a id="blobs-link" href="/blobs">Blobs</a> <a id="pulse-link" href="/pulse">Pulse</a> <a id="biome-link" href="/biome">Biome</a> <a id="meet-link" href="/meet">Meet</a></nav>
     </header>
     <main>${body}</main>
   </body>
